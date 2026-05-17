@@ -1,0 +1,243 @@
+"""Centralized application configuration.
+
+Secrets are never stored in this file or in ``config.yaml``. The YAML file
+declares defaults and environment-variable names; runtime values are read from
+the environment so each deployment can configure credentials independently.
+"""
+
+from __future__ import annotations
+
+import os
+from copy import deepcopy
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from src.init import PROJECT_ROOT
+
+
+CONFIG_PATH = PROJECT_ROOT / "config.yaml"
+
+DEFAULT_CONFIG: dict[str, Any] = {
+    "openai": {
+        "api_key_env": "OPENAI_API_KEY",
+        "base_url": "https://api.openai.com",
+        "responses_path": "/v1/responses",
+        "default_model": "gpt-5.5",
+        "default_reasoning_effort": "medium",
+        "default_max_output_tokens": 4096,
+        "timeout_seconds": 60,
+    },
+    "router": {"max_route_retries": 3},
+    "frameworks": {
+        "Cash_Anchor": {
+            "model": "gpt-5.5",
+            "reasoning_effort": "medium",
+            "max_output_tokens": 4096,
+        },
+        "CN_Alpha_Growth": {
+            "model": "gpt-5.5",
+            "reasoning_effort": "medium",
+            "max_output_tokens": 4096,
+        },
+        "US_Disruptive_Growth": {
+            "model": "gpt-5.5",
+            "reasoning_effort": "high",
+            "max_output_tokens": 4096,
+        },
+    },
+    "messaging": {
+        "provider": "feishu",
+        "webhook_url_env": "FEISHU_WEBHOOK_URL",
+        "verification_token_env": "FEISHU_VERIFICATION_TOKEN",
+        "encrypt_key_env": "FEISHU_ENCRYPT_KEY",
+    },
+    "yuque": {
+        "token_env": "YUQUE_TOKEN",
+        "namespace_env": "YUQUE_NAMESPACE",
+        "archive_dir_env": "YUQUE_ARCHIVE_DIR",
+    },
+    "iwencai": {
+        "api_key_env": "IWENCAI_API_KEY",
+        "api_url_env": "IWENCAI_API_URL",
+    },
+    "token_monitor": {
+        "enabled": True,
+        "daily_total_token_limit": 300000,
+        "per_session_token_limit": 50000,
+        "warning_threshold": 0.8,
+    },
+}
+
+
+@dataclass(frozen=True)
+class OpenAISettings:
+    """Runtime settings for OpenAI Responses API calls."""
+
+    api_key: str
+    base_url: str
+    responses_path: str
+    default_model: str
+    default_reasoning_effort: str
+    default_max_output_tokens: int
+    timeout_seconds: int
+
+
+@dataclass(frozen=True)
+class FrameworkLLMSettings:
+    """Per-framework model selection knobs."""
+
+    model: str
+    reasoning_effort: str
+    max_output_tokens: int
+
+
+@dataclass(frozen=True)
+class MessagingSettings:
+    """Runtime settings for outbound chat delivery and Feishu verification."""
+
+    provider: str
+    webhook_url: str
+    verification_token: str
+    encrypt_key: str
+
+
+class AppConfig:
+    """Typed accessors over ``config.yaml`` and environment variables."""
+
+    def __init__(self, path: Path = CONFIG_PATH) -> None:
+        self.path = path
+        self.raw = _deep_merge(DEFAULT_CONFIG, _load_config_file(path))
+
+    def openai(self) -> OpenAISettings:
+        section = self.raw["openai"]
+        return OpenAISettings(
+            api_key=os.getenv(section["api_key_env"], ""),
+            base_url=str(section["base_url"]).rstrip("/"),
+            responses_path=str(section["responses_path"]),
+            default_model=str(section["default_model"]),
+            default_reasoning_effort=str(section["default_reasoning_effort"]),
+            default_max_output_tokens=int(section["default_max_output_tokens"]),
+            timeout_seconds=int(section["timeout_seconds"]),
+        )
+
+    def framework_llm(self, framework_id: str | None) -> FrameworkLLMSettings:
+        openai = self.openai()
+        section = self.raw.get("frameworks", {}).get(framework_id or "", {})
+        return FrameworkLLMSettings(
+            model=str(section.get("model") or openai.default_model),
+            reasoning_effort=str(section.get("reasoning_effort") or openai.default_reasoning_effort),
+            max_output_tokens=int(section.get("max_output_tokens") or openai.default_max_output_tokens),
+        )
+
+    def messaging(self) -> MessagingSettings:
+        section = self.raw["messaging"]
+        return MessagingSettings(
+            provider=str(section.get("provider", "feishu")),
+            webhook_url=os.getenv(str(section["webhook_url_env"]), ""),
+            verification_token=os.getenv(str(section["verification_token_env"]), ""),
+            encrypt_key=os.getenv(str(section["encrypt_key_env"]), ""),
+        )
+
+    def token_monitor(self) -> dict[str, Any]:
+        """Return token monitor settings as a plain dict."""
+
+        return dict(self.raw.get("token_monitor", {}))
+
+
+def get_config() -> AppConfig:
+    """Return a fresh config view so tests can change environment variables."""
+
+    return AppConfig()
+
+
+def _load_config_file(path: Path) -> dict[str, Any]:
+    """Load project config using PyYAML when present, with a small fallback."""
+
+    if not path.exists():
+        return {}
+    try:
+        import yaml  # type: ignore
+
+        with path.open("r", encoding="utf-8") as file:
+            return yaml.safe_load(file) or {}
+    except ModuleNotFoundError:
+        return _load_simple_yaml(path)
+
+
+def _load_simple_yaml(path: Path) -> dict[str, Any]:
+    """Parse the limited YAML shape used by this project without dependencies."""
+
+    result: dict[str, Any] = {}
+    current_top: str | None = None
+    current_framework: str | None = None
+    current_list_key: str | None = None
+
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        stripped = line.strip()
+
+        if indent == 0 and stripped.endswith(":"):
+            current_top = stripped[:-1]
+            result.setdefault(current_top, {})
+            current_framework = None
+            current_list_key = None
+            continue
+
+        if current_top == "frameworks" and indent == 2 and stripped.endswith(":"):
+            current_framework = stripped[:-1]
+            result["frameworks"].setdefault(current_framework, {})
+            current_list_key = None
+            continue
+
+        if current_top == "frameworks" and current_framework and indent == 4:
+            key, value = _split_key_value(stripped)
+            if value is None:
+                result["frameworks"][current_framework][key] = []
+                current_list_key = key
+            else:
+                result["frameworks"][current_framework][key] = _parse_scalar(value)
+            continue
+
+        if current_top == "frameworks" and current_framework and current_list_key and indent == 6:
+            if stripped.startswith("- "):
+                result["frameworks"][current_framework][current_list_key].append(_parse_scalar(stripped[2:]))
+            continue
+
+        if current_top and indent == 2:
+            key, value = _split_key_value(stripped)
+            if value is not None:
+                result[current_top][key] = _parse_scalar(value)
+
+    return result
+
+
+def _split_key_value(text: str) -> tuple[str, str | None]:
+    if ":" not in text:
+        return text, None
+    key, value = text.split(":", 1)
+    value = value.strip()
+    return key.strip(), value if value else None
+
+
+def _parse_scalar(value: str) -> Any:
+    clean = value.strip().strip('"').strip("'")
+    if clean.isdigit():
+        return int(clean)
+    try:
+        return float(clean)
+    except ValueError:
+        return clean
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = deepcopy(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged

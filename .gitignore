@@ -1,0 +1,39 @@
+# Secrets and local config
+.env
+.env.*
+!.env.example
+*.local
+
+# Python runtime artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Private investment records
+frameworks/*/logs/*
+!frameworks/*/logs/.gitkeep
+
+frameworks/*/chat_history/*
+!frameworks/*/chat_history/.gitkeep
+
+# Runtime ledgers and generated local state
+runtime/*
+!runtime/.gitkeep
+!runtime/token_usage/
+runtime/token_usage/*
+!runtime/token_usage/.gitkeep
+
+# Generated reports / exports
+*.log
+*.tmp
+*.bak

@@ -1,0 +1,62 @@
+openai:
+  # Do not put the real key here. Set this environment variable instead.
+  api_key_env: OPENAI_API_KEY
+  base_url: https://api.openai.com
+  responses_path: /v1/responses
+  default_model: gpt-5.5
+  default_reasoning_effort: medium
+  default_max_output_tokens: 4096
+  timeout_seconds: 60
+
+router:
+  max_route_retries: 3
+
+frameworks:
+  Cash_Anchor:
+    model: gpt-5.5
+    reasoning_effort: medium
+    max_output_tokens: 4096
+    allowed_skills:
+      - hithink-market-query
+      - position_snapshot
+      - trade_history
+      - news-search
+  CN_Alpha_Growth:
+    model: gpt-5.5
+    reasoning_effort: medium
+    max_output_tokens: 4096
+    allowed_skills:
+      - hithink-market-query
+      - position_snapshot
+      - trade_history
+      - news-search
+  US_Disruptive_Growth:
+    model: gpt-5.5
+    reasoning_effort: high
+    max_output_tokens: 4096
+    allowed_skills:
+      - hithink-market-query
+      - position_snapshot
+      - trade_history
+      - news-search
+
+messaging:
+  provider: feishu
+  webhook_url_env: FEISHU_WEBHOOK_URL
+  verification_token_env: FEISHU_VERIFICATION_TOKEN
+  encrypt_key_env: FEISHU_ENCRYPT_KEY
+
+yuque:
+  token_env: YUQUE_TOKEN
+  namespace_env: YUQUE_NAMESPACE
+  archive_dir_env: YUQUE_ARCHIVE_DIR
+
+iwencai:
+  api_key_env: IWENCAI_API_KEY
+  api_url_env: IWENCAI_API_URL
+
+token_monitor:
+  enabled: true
+  daily_total_token_limit: 300000
+  per_session_token_limit: 50000
+  warning_threshold: 0.8
