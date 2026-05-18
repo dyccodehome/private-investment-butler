@@ -16,6 +16,7 @@ from src.init import PROJECT_ROOT
 
 
 CONFIG_PATH = PROJECT_ROOT / "config.yaml"
+ENV_PATH = PROJECT_ROOT / ".env"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "openai": {
@@ -105,6 +106,7 @@ class AppConfig:
     """对 ``config.yaml`` 和环境变量的类型化访问封装。"""
 
     def __init__(self, path: Path = CONFIG_PATH) -> None:
+        _load_env_file(ENV_PATH)
         self.path = path
         self.raw = _deep_merge(DEFAULT_CONFIG, _load_config_file(path))
 
@@ -148,6 +150,23 @@ def get_config() -> AppConfig:
     """返回新的配置视图，方便测试时动态修改环境变量。"""
 
     return AppConfig()
+
+
+def _load_env_file(path: Path) -> None:
+    """加载项目根目录的 ``.env``，但不覆盖外部已经注入的环境变量。"""
+
+    if not path.exists():
+        return
+
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 
 def _load_config_file(path: Path) -> dict[str, Any]:
