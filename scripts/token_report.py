@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Summarize local token usage JSONL logs.
+"""汇总本地 Token 用量 JSONL 日志。
 
-Usage:
+用法：
   python3 scripts/token_report.py
   python3 scripts/token_report.py --date 2026-05-17
 """

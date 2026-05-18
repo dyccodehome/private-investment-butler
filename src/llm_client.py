@@ -1,7 +1,7 @@
-"""OpenAI Responses API gateway.
+"""OpenAI Responses API 网关。
 
-The rest of the agent calls this boundary instead of importing vendor SDKs.
-Credentials and model defaults come from ``src.app_config``.
+Agent 其他模块只调用这一层，不直接依赖厂商 SDK。
+凭据和模型默认值统一来自 ``src.app_config``。
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from src.token_monitor import build_token_warning, record_token_usage
 
 @dataclass(frozen=True)
 class LLMConfig:
-    """Runtime knobs for one OpenAI model call."""
+    """单次 OpenAI 模型调用的运行时参数。"""
 
     model: str
     reasoning_effort: str
@@ -27,10 +27,10 @@ class LLMConfig:
 
 
 class LLMClient:
-    """Thin OpenAI client using the Responses API."""
+    """基于 Responses API 的轻量 OpenAI 客户端。"""
 
     def __init__(self, config: LLMConfig | None = None) -> None:
-        """Create a client with explicit config or project defaults."""
+        """使用显式配置或项目默认值创建客户端。"""
 
         app_config = get_config()
         openai_settings = app_config.openai()
@@ -46,7 +46,7 @@ class LLMClient:
 
     @classmethod
     def for_framework(cls, framework_id: str | None) -> "LLMClient":
-        """Create a client using framework-specific model settings."""
+        """按策略框架专属模型配置创建客户端。"""
 
         settings: FrameworkLLMSettings = get_config().framework_llm(framework_id)
         return cls(
@@ -68,11 +68,10 @@ class LLMClient:
         chat_id: str | None = None,
         user_query: str | None = None,
     ) -> str:
-        """Call OpenAI and return plain text.
+        """调用 OpenAI 并返回纯文本。
 
-        If ``OPENAI_API_KEY`` is not configured yet, return a clear placeholder
-        so the rest of the pipeline remains testable while credentials are
-        being provisioned.
+        如果尚未配置 ``OPENAI_API_KEY``，返回清晰的占位提示，
+        让其余管道在配置凭据前仍可测试。
         """
 
         if not self.api_key:
@@ -145,7 +144,7 @@ class LLMClient:
         return _extract_response_text(response)
 
     def _post_json(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """POST one request to OpenAI using only Python standard library."""
+        """只使用 Python 标准库向 OpenAI POST 一次请求。"""
 
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = request.Request(
@@ -168,7 +167,7 @@ class LLMClient:
 
 
 def _extract_response_text(response: dict[str, Any]) -> str:
-    """Extract text from common Responses API JSON shapes."""
+    """从常见 Responses API JSON 结构中提取文本。"""
 
     if isinstance(response.get("output_text"), str):
         return response["output_text"]

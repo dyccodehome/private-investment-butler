@@ -1,4 +1,4 @@
-"""Global state container for the hand-rolled multi-agent pipeline."""
+"""手搓多智能体管道的全局状态容器。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 
 class PipelineStatus(str, Enum):
-    """Lifecycle flags used by the pipeline loop to decide the next branch."""
+    """管道循环用于判断下一步分支的生命周期状态。"""
 
     RUNNING = "running"
     NEEDS_DISCLOSURE = "needs_disclosure"
@@ -20,7 +20,7 @@ class PipelineStatus(str, Enum):
 
 @dataclass
 class SkillRequest:
-    """A worker's explicit request for progressive data disclosure."""
+    """子 Agent 对渐进式数据披露提出的显式申请。"""
 
     skill_name: str
     reason: str
@@ -29,7 +29,7 @@ class SkillRequest:
 
 @dataclass
 class DisclosureRecord:
-    """Data disclosed by the pipeline after a skill call."""
+    """主管道调用 Skill 后披露给子 Agent 的数据记录。"""
 
     skill_name: str
     arguments: dict[str, Any] = field(default_factory=dict)
@@ -38,7 +38,7 @@ class DisclosureRecord:
 
 @dataclass
 class DebateEntry:
-    """Audit and debate log appended by the AOP auditor."""
+    """AOP 审计官追加的审计与辩论日志。"""
 
     role: Literal["worker", "auditor", "master", "human"]
     content: str
@@ -47,11 +47,10 @@ class DebateEntry:
 
 @dataclass
 class AgentState:
-    """Single source of truth passed through every pipeline node.
+    """贯穿所有管道节点的唯一事实来源。
 
-    All pipeline nodes mutate and return this object instead of passing many
-    scattered parameters. That keeps routing, skill requests, disclosed data,
-    audit debate logs, and final output in one auditable record.
+    所有管道节点都修改并返回这个对象，而不是传递大量分散参数。
+    这样路由、Skill 申请、披露数据、审计辩论日志和最终输出都能保存在同一份可审计记录里。
     """
 
     user_input: str
@@ -74,20 +73,19 @@ class AgentState:
     errors: list[str] = field(default_factory=list)
 
     def reset_for_reroute(self) -> None:
-        """Prepare state for another router attempt after worker bounce-back.
+        """子 Agent 弹回后，为下一次路由尝试准备状态。
 
-        The rejection reason is intentionally retained in ``bounce_reason`` so
-        the router can include it as penalty context on the next attempt.
+        这里会刻意保留 ``bounce_reason``，让路由器在下一次尝试时能带上惩罚性上下文。
         """
 
-        # Clear only assignment fields; keep attempts and bounce_reason as trace.
+        # 只清理分配相关字段；保留尝试次数和 bounce_reason 作为链路痕迹。
         self.framework_id = None
         self.route_reason = None
         self.bounce_back = False
         self.status = PipelineStatus.RUNNING
 
     def append_error(self, message: str) -> None:
-        """Record a terminal pipeline error and mark the lifecycle as failed."""
+        """记录终止性管道错误，并把生命周期标记为失败。"""
 
         self.errors.append(message)
         self.status = PipelineStatus.FAILED

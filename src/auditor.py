@@ -1,4 +1,4 @@
-"""AOP-style asynchronous audit middleware."""
+"""AOP 风格的异步审计中间件。"""
 
 from __future__ import annotations
 
@@ -8,18 +8,16 @@ from src.state import AgentState, DebateEntry, DisclosureRecord, PipelineStatus
 
 
 def audit_before_output(state: AgentState) -> AgentState:
-    """Intercept every outbound decision before the user sees it.
+    """在用户看到结果前拦截每一次对外决策。
 
-    The auditor is intentionally outside the worker. It selects a contrary
-    persona, independently calls skills for adverse evidence, and appends its
-    debate entry to the global state before output is allowed.
+    审计官刻意放在子 Agent 外部。它会选择反方人设，
+    独立加载反方证据 Skill，并在允许输出前把辩论记录追加到全局状态。
     """
 
     persona = _select_persona(state)
     state.audit_persona = persona
 
-    # The audit path does not trust the worker's summary; it loads its own
-    # adverse-evidence skill instructions through the same disclosure boundary.
+    # 审计路径不信任子 Agent 的摘要，而是通过同一披露边界加载自己的反方证据 Skill。
     symbol = _extract_symbol_placeholder(state.user_input)
     adverse_skill = load_skill("news-search", {"symbol": symbol})
     state.disclosed_data.append(
@@ -45,22 +43,22 @@ def audit_before_output(state: AgentState) -> AgentState:
 
 
 def enforce_circuit_breaker(state: AgentState) -> AgentState:
-    """Convert the audit signal into either final output or a hard stop."""
+    """把审计信号转换为最终输出或强制熔断。"""
 
     if state.audit_signal == "REJECT":
-        # Human-in-the-loop boundary: do not output an automated decision.
+        # 人工介入边界：此时不输出自动化决策。
         state.status = PipelineStatus.AUDIT_REJECTED
         state.final_answer = _format_rejection(state)
         return state
 
-    # Non-rejected decisions are formatted and released to the user.
+    # 未被拒绝的决策会被格式化并发送给用户。
     state.status = PipelineStatus.COMPLETED
     state.final_answer = _format_pass(state)
     return state
 
 
 def _select_persona(state: AgentState) -> str:
-    """Choose an audit persona based on the operation being intercepted."""
+    """根据被拦截操作选择审计人设。"""
 
     text = state.user_input
     if "修改" in text or "宪法" in text or "框架" in text:
@@ -71,27 +69,27 @@ def _select_persona(state: AgentState) -> str:
 
 
 def _format_pass(state: AgentState) -> str:
-    """Build the user-facing response when audit does not reject."""
+    """构造审计未拒绝时面向用户的回复。"""
 
     audit = "\n".join(f"- {item.content}" for item in state.audit_log)
     return f"{state.draft_decision}\n\n审计记录：\n{audit}"
 
 
 def _format_rejection(state: AgentState) -> str:
-    """Build the user-facing response when the circuit breaker fires."""
+    """构造熔断触发时面向用户的回复。"""
 
     audit = "\n".join(f"- [{item.verdict}] {item.content}" for item in state.audit_log)
     return "流程已熔断，等待 Human-in-the-loop 裁决。\n\n" + audit
 
 
 def _extract_symbol_placeholder(user_input: str) -> str:
-    """Temporary symbol extractor used by the independent auditor path."""
+    """独立审计路径使用的临时标的提取器。"""
 
     return user_input.strip().split()[0] if user_input.strip() else "UNKNOWN"
 
 
 def _run_audit_llm(state: AgentState, persona: str) -> str:
-    """Ask an independent LLM persona to challenge the worker decision."""
+    """让独立 LLM 审计人设挑战子 Agent 决策。"""
 
     client = LLMClient.for_framework(state.framework_id)
     return client.complete(

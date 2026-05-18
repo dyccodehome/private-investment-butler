@@ -1,7 +1,7 @@
-"""Conversation context logger.
+"""会话上下文记录器。
 
-Persists each completed interaction as JSON Lines under the selected strategy
-island. This is the local-first "black box" fuel for weekly review agents.
+每次完整交互都会以 JSON Lines 形式固化到对应策略岛下。
+这是本地优先的“会话黑匣子”，为周度复盘 Agent 提供底层燃料。
 """
 
 from __future__ import annotations
@@ -17,11 +17,10 @@ from src.state import AgentState, DebateEntry
 
 
 def save_chat_session(state: AgentState) -> Path:
-    """Append one complete AgentState snapshot to strategy chat history.
+    """将一份完整 AgentState 快照追加到策略会话历史中。
 
-    The file path is ``frameworks/{framework_id}/chat_history/YYYY-MM-DD.jsonl``.
-    Each line is one interaction, making it cheap to stream or fully inject into
-    a weekend review workflow.
+    文件路径为 ``frameworks/{framework_id}/chat_history/YYYY-MM-DD.jsonl``。
+    每一行是一轮交互，方便后续流式读取或完整注入周末复盘流程。
     """
 
     framework_id = state.framework_id or "unrouted"
@@ -45,7 +44,7 @@ def save_user_action(
     final_reply_to_user: str,
     reason: str = "",
 ) -> Path:
-    """Append a Human-in-the-loop callback decision to chat history."""
+    """将一次人工介入回调裁决追加到会话历史。"""
 
     state = AgentState(
         user_input="[interactive_callback]",
@@ -65,7 +64,7 @@ def save_user_action(
 
 
 def _build_record(state: AgentState, timestamp: datetime) -> dict[str, Any]:
-    """Convert AgentState into a compact JSONL record."""
+    """将 AgentState 转换为紧凑 JSONL 记录。"""
 
     return {
         "timestamp": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
@@ -88,7 +87,7 @@ def _build_record(state: AgentState, timestamp: datetime) -> dict[str, Any]:
 
 
 def _compact_disclosure(item: Any) -> dict[str, Any]:
-    """Keep disclosed-data logs useful without storing full Skill prompts."""
+    """保留披露数据的可用信息，但不存储完整 Skill 提示词。"""
 
     payload = dict(item.payload)
     payload.pop("instructions", None)

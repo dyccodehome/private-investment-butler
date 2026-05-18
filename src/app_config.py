@@ -1,8 +1,7 @@
-"""Centralized application configuration.
+"""应用统一配置管理。
 
-Secrets are never stored in this file or in ``config.yaml``. The YAML file
-declares defaults and environment-variable names; runtime values are read from
-the environment so each deployment can configure credentials independently.
+密钥绝不存放在本文件或 ``config.yaml`` 中。YAML 文件只声明默认值和环境变量名；
+运行时从环境变量读取真实值，方便不同部署环境独立配置凭据。
 """
 
 from __future__ import annotations
@@ -72,7 +71,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 @dataclass(frozen=True)
 class OpenAISettings:
-    """Runtime settings for OpenAI Responses API calls."""
+    """OpenAI Responses API 调用的运行时配置。"""
 
     api_key: str
     base_url: str
@@ -85,7 +84,7 @@ class OpenAISettings:
 
 @dataclass(frozen=True)
 class FrameworkLLMSettings:
-    """Per-framework model selection knobs."""
+    """每个策略框架独立的模型选择参数。"""
 
     model: str
     reasoning_effort: str
@@ -94,7 +93,7 @@ class FrameworkLLMSettings:
 
 @dataclass(frozen=True)
 class MessagingSettings:
-    """Runtime settings for outbound chat delivery and Feishu verification."""
+    """消息发送与飞书校验的运行时配置。"""
 
     provider: str
     webhook_url: str
@@ -103,7 +102,7 @@ class MessagingSettings:
 
 
 class AppConfig:
-    """Typed accessors over ``config.yaml`` and environment variables."""
+    """对 ``config.yaml`` 和环境变量的类型化访问封装。"""
 
     def __init__(self, path: Path = CONFIG_PATH) -> None:
         self.path = path
@@ -140,24 +139,24 @@ class AppConfig:
         )
 
     def token_monitor(self) -> dict[str, Any]:
-        """Return token monitor settings as a plain dict."""
+        """以普通字典形式返回 Token 监控配置。"""
 
         return dict(self.raw.get("token_monitor", {}))
 
 
 def get_config() -> AppConfig:
-    """Return a fresh config view so tests can change environment variables."""
+    """返回新的配置视图，方便测试时动态修改环境变量。"""
 
     return AppConfig()
 
 
 def _load_config_file(path: Path) -> dict[str, Any]:
-    """Load project config using PyYAML when present, with a small fallback."""
+    """优先用 PyYAML 加载项目配置；若未安装则使用轻量 fallback。"""
 
     if not path.exists():
         return {}
     try:
-        import yaml  # type: ignore
+        import yaml  # type: ignore  # 可选依赖：存在则使用，不存在则走轻量解析器。
 
         with path.open("r", encoding="utf-8") as file:
             return yaml.safe_load(file) or {}
@@ -166,7 +165,7 @@ def _load_config_file(path: Path) -> dict[str, Any]:
 
 
 def _load_simple_yaml(path: Path) -> dict[str, Any]:
-    """Parse the limited YAML shape used by this project without dependencies."""
+    """在没有依赖的情况下解析本项目有限的 YAML 结构。"""
 
     result: dict[str, Any] = {}
     current_top: str | None = None

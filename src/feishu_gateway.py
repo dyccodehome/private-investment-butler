@@ -1,4 +1,4 @@
-"""FastAPI gateway for Feishu events and interactive callbacks."""
+"""处理飞书事件与交互回调的 FastAPI 网关。"""
 
 from __future__ import annotations
 
@@ -24,14 +24,14 @@ app = FastAPI(title="Private Investment Butler Feishu Gateway")
 
 @app.post("/webhook/feishu")
 async def receive_feishu_event(request: Request, background_tasks: BackgroundTasks) -> dict[str, Any]:
-    """Receive Feishu messages, return immediately, and run Agent in background."""
+    """接收飞书消息，立即返回，并在后台运行 Agent。"""
 
     payload = await request.json()
 
     if not _verify_feishu_token(payload):
         return {"code": 0, "msg": "verification failed"}
 
-    # Feishu URL verification challenge.
+    # 飞书 URL 校验 challenge。
     if "challenge" in payload:
         return {"challenge": payload["challenge"]}
 
@@ -55,7 +55,7 @@ async def receive_feishu_event(request: Request, background_tasks: BackgroundTas
 
 @app.post("/webhook/callback")
 async def receive_feishu_callback(request: Request) -> dict[str, Any]:
-    """Receive button clicks from Feishu interactive cards."""
+    """接收飞书交互卡片按钮点击。"""
 
     payload = await request.json()
     if not _verify_feishu_token(payload):
@@ -102,7 +102,7 @@ async def receive_feishu_callback(request: Request) -> dict[str, Any]:
 
 
 def _run_agent_background(chat_id: str, text: str) -> None:
-    """Run the slow Agent pipeline after Feishu HTTP connection is released."""
+    """在释放飞书 HTTP 连接后运行耗时 Agent 管道。"""
 
     try:
         run_pipeline(text, chat_id=chat_id)
@@ -111,7 +111,7 @@ def _run_agent_background(chat_id: str, text: str) -> None:
 
 
 def _extract_event_id(payload: dict[str, Any]) -> str:
-    """Extract a stable event id for duplicate delivery suppression."""
+    """提取稳定事件 ID，用于抑制重复投递。"""
 
     return (
         str(payload.get("event_id") or "")
@@ -121,10 +121,10 @@ def _extract_event_id(payload: dict[str, Any]) -> str:
 
 
 def _verify_feishu_token(payload: dict[str, Any]) -> bool:
-    """Verify Feishu token when FEISHU_VERIFICATION_TOKEN is configured.
+    """配置 FEISHU_VERIFICATION_TOKEN 时校验飞书 token。
 
-    This is the minimal cheap verification path for the webhook boundary. If
-    encrypted events are enabled later, decrypt before calling this parser.
+    这是 webhook 边界上的最低成本校验路径。若后续启用加密事件，
+    应先解密再调用此解析逻辑。
     """
 
     expected = get_config().messaging().verification_token
@@ -135,7 +135,7 @@ def _verify_feishu_token(payload: dict[str, Any]) -> bool:
 
 
 def _extract_chat_id(payload: dict[str, Any]) -> str:
-    """Extract Feishu chat_id from common event payload shapes."""
+    """从常见事件结构中提取飞书 chat_id。"""
 
     event = payload.get("event", {})
     message = event.get("message", {})
@@ -143,7 +143,7 @@ def _extract_chat_id(payload: dict[str, Any]) -> str:
 
 
 def _extract_text(payload: dict[str, Any]) -> str:
-    """Extract plain text from Feishu message content JSON."""
+    """从飞书消息 content JSON 中提取纯文本。"""
 
     message = payload.get("event", {}).get("message", {})
     content = message.get("content", "")
@@ -159,7 +159,7 @@ def _extract_text(payload: dict[str, Any]) -> str:
 
 
 def _extract_callback_value(payload: dict[str, Any]) -> dict[str, str]:
-    """Extract card button value from Feishu callback payload."""
+    """从飞书回调 payload 中提取卡片按钮 value。"""
 
     action = payload.get("action", {})
     value = action.get("value", {})

@@ -1,4 +1,4 @@
-"""Local markdown IO and future Yuque sync boundary."""
+"""本地 Markdown IO 与未来语雀同步边界。"""
 
 from __future__ import annotations
 
@@ -6,13 +6,13 @@ from pathlib import Path
 
 
 def read_markdown(path: str | Path) -> str:
-    """Read a markdown file as UTF-8 text."""
+    """按 UTF-8 读取 Markdown 文件。"""
 
     return Path(path).read_text(encoding="utf-8")
 
 
 def write_markdown(path: str | Path, content: str) -> None:
-    """Write markdown text, creating parent directories when needed."""
+    """写入 Markdown 文本，必要时创建父目录。"""
 
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -20,10 +20,9 @@ def write_markdown(path: str | Path, content: str) -> None:
 
 
 def patch_markdown(path: str | Path, old: str, new: str) -> None:
-    """Replace the first exact markdown fragment match.
+    """替换第一个精确匹配的 Markdown 片段。
 
-    Exact-match patching is deliberately conservative so constitution edits do
-    not silently modify the wrong section.
+    精确匹配补丁刻意保持保守，避免宪法编辑时静默改错段落。
     """
 
     target = Path(path)
@@ -34,7 +33,7 @@ def patch_markdown(path: str | Path, old: str, new: str) -> None:
 
 
 def sync_to_yuque(markdown: str, title: str) -> dict[str, str]:
-    """Placeholder boundary for future Yuque cloud synchronization."""
+    """未来语雀云同步的占位边界。"""
 
     return {
         "title": title,

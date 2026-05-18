@@ -1,4 +1,4 @@
-"""Initialization helpers for private_investment_butler."""
+"""private_investment_butler 的初始化路径辅助。"""
 
 from pathlib import Path
 

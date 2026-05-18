@@ -1,4 +1,4 @@
-"""Token usage monitor and local JSONL ledger."""
+"""Token 用量监控与本地 JSONL 账本。"""
 
 from __future__ import annotations
 
@@ -30,10 +30,10 @@ def record_token_usage(
     status: str,
     error: str = "",
 ) -> Path | None:
-    """Append one model-call usage record.
+    """追加一条模型调用用量记录。
 
-    OpenAI usage data is treated as source of truth. When unavailable, token
-    fields default to zero and the prompt fingerprint still allows attribution.
+    OpenAI 返回的 usage 数据被视为事实来源。若不可用，token 字段默认为 0，
+    但 prompt 指纹仍可用于归因分析。
     """
 
     settings = get_config().token_monitor()
@@ -67,7 +67,7 @@ def record_token_usage(
 
 
 def build_token_warning(chat_id: str | None = None) -> str | None:
-    """Return a warning message when today's token usage crosses threshold."""
+    """当今日 Token 用量超过阈值时返回提醒文案。"""
 
     settings = get_config().token_monitor()
     if settings.get("enabled") is False:
@@ -91,7 +91,7 @@ def build_token_warning(chat_id: str | None = None) -> str | None:
 
 
 def get_today_total_tokens() -> int:
-    """Sum total tokens from today's local ledger."""
+    """汇总今天本地账本中的总 Token 数。"""
 
     path = TOKEN_USAGE_DIR / f"{datetime.now():%Y-%m-%d}.jsonl"
     if not path.exists():
@@ -108,7 +108,7 @@ def get_today_total_tokens() -> int:
 
 
 def _extract_usage(response: dict[str, Any]) -> dict[str, int]:
-    """Normalize Responses API usage fields."""
+    """标准化 Responses API 的 usage 字段。"""
 
     usage = response.get("usage") or {}
     input_tokens = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
@@ -125,7 +125,7 @@ def _extract_usage(response: dict[str, Any]) -> dict[str, int]:
 
 
 def _prompt_fingerprint(system_prompt: str, user_prompt: str) -> str:
-    """Hash prompt content for duplicate-cost attribution without storing it."""
+    """对提示词内容做哈希，既能归因重复成本，又不存储原文。"""
 
     digest = hashlib.sha256()
     digest.update(system_prompt.encode("utf-8"))

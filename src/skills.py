@@ -1,8 +1,7 @@
-"""On-demand Skill loader inspired by Claude Code progressive disclosure.
+"""受 Claude Code 渐进披露启发的按需 Skill 加载器。
 
-This module does not implement business tools directly. It only keeps a small
-registry and loads the requested Skill's instructions when the pipeline grants
-disclosure. Real data/API code should live behind each Skill boundary later.
+本模块不直接实现业务工具，只维护轻量注册表，并在管道授权披露时加载被申请的 Skill。
+真实数据/API 代码后续应放在各自 Skill 边界之后。
 """
 
 from __future__ import annotations
@@ -16,7 +15,7 @@ from src.init import SKILLS_DIR
 
 @dataclass(frozen=True)
 class SkillSpec:
-    """Static metadata needed to locate and describe one skill."""
+    """定位和描述单个 Skill 所需的静态元数据。"""
 
     skill_id: str
     directory: str
@@ -26,7 +25,7 @@ class SkillSpec:
 
 @dataclass(frozen=True)
 class LoadedSkill:
-    """A Skill after its instruction file has been loaded on demand."""
+    """按需加载指令文件后的 Skill 对象。"""
 
     skill_id: str
     description: str
@@ -35,12 +34,10 @@ class LoadedSkill:
     arguments: dict[str, Any]
 
     def to_payload(self) -> dict[str, Any]:
-        """Convert loaded skill content into compact disclosure metadata.
+        """将已加载 Skill 转换为紧凑披露元数据。
 
-        Full ``SKILL.md`` instructions are deliberately excluded from the
-        default payload to avoid feeding large static prompts to the model on
-        every turn. The path is kept so a future node can explicitly reload the
-        full Skill when genuinely needed.
+        默认 payload 会刻意排除完整 ``SKILL.md`` 指令，避免每轮都把大段静态提示词喂给模型。
+        路径会保留，方便后续节点在确实需要时显式重新加载完整 Skill。
         """
 
         return {
@@ -52,7 +49,7 @@ class LoadedSkill:
 
 
 SKILL_ALIASES: dict[str, str] = {
-    # Backward-compatible semantic aliases for older pipeline states.
+    # 兼容早期管道状态的语义别名。
     "market_snapshot": "hithink-market-query",
     "negative_news": "news-search",
 }
@@ -61,10 +58,10 @@ SKILL_REGISTRY: dict[str, SkillSpec] = {}
 
 
 def load_skill(skill_id: str, arguments: dict[str, Any] | None = None) -> LoadedSkill:
-    """Load exactly one Skill when a pipeline node asks for it.
+    """当管道节点申请时，只加载指定的一个 Skill。
 
-    The caller receives only this Skill's instruction text, not every available
-    tool. That is the progressive disclosure boundary: no request, no load.
+    调用方只会拿到这个 Skill 的内容，而不是所有可用工具。
+    这就是渐进披露边界：不申请，就不加载。
     """
 
     spec = get_skill_spec(skill_id)
@@ -82,7 +79,7 @@ def load_skill(skill_id: str, arguments: dict[str, Any] | None = None) -> Loaded
 
 
 def get_skill_spec(skill_id: str) -> SkillSpec:
-    """Return registry metadata without loading the Skill body."""
+    """只返回注册表元数据，不加载 Skill 正文。"""
 
     registry = _get_registry()
     resolved_id = SKILL_ALIASES.get(skill_id, skill_id)
@@ -92,13 +89,13 @@ def get_skill_spec(skill_id: str) -> SkillSpec:
 
 
 def list_skill_ids() -> list[str]:
-    """List available Skill ids without reading any Skill files."""
+    """列出可用 Skill ID，但不读取任何 Skill 文件正文。"""
 
     return sorted(_get_registry())
 
 
 def _get_registry() -> dict[str, SkillSpec]:
-    """Return cached Skill registry, discovering directories on first use."""
+    """返回缓存的 Skill 注册表，首次使用时自动发现目录。"""
 
     global SKILL_REGISTRY
     if not SKILL_REGISTRY:
@@ -107,7 +104,7 @@ def _get_registry() -> dict[str, SkillSpec]:
 
 
 def _discover_skills() -> dict[str, SkillSpec]:
-    """Scan ``skills/*/SKILL.md`` without reading full Skill instructions."""
+    """扫描 ``skills/*/SKILL.md``，但不读取完整 Skill 指令。"""
 
     registry: dict[str, SkillSpec] = {}
     if not SKILLS_DIR.exists():
@@ -127,7 +124,7 @@ def _discover_skills() -> dict[str, SkillSpec]:
 
 
 def _read_frontmatter_description(path: Path) -> str:
-    """Read only the YAML frontmatter description line, if present."""
+    """只读取 YAML frontmatter 中的 description 行。"""
 
     try:
         with path.open("r", encoding="utf-8") as file:

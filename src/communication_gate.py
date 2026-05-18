@@ -1,8 +1,7 @@
-"""Unified outbound communication gateway.
+"""统一对外通讯网关。
 
-All user-visible output should go through ``send(chat_id, text)``. The current
-implementation supports a Feishu incoming webhook and falls back to stdout for
-local CLI runs.
+所有用户可见输出都应该走 ``send(chat_id, text)``。
+当前实现支持飞书 Webhook；本地 CLI 运行时会回退到标准输出。
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ _EXECUTOR = ThreadPoolExecutor(max_workers=4)
 
 
 def send(chat_id: str, text: str) -> None:
-    """Push text to the configured chat channel without blocking the pipeline."""
+    """非阻塞地把文本推送到已配置的聊天通道。"""
 
     webhook_url = get_config().messaging().webhook_url
     if not webhook_url:
@@ -34,7 +33,7 @@ def send(chat_id: str, text: str) -> None:
 
 
 def send_card(chat_id: str, title: str, text: str, actions: list[dict[str, str]]) -> None:
-    """Push an interactive Feishu card with action buttons."""
+    """推送带动作按钮的飞书交互卡片。"""
 
     webhook_url = get_config().messaging().webhook_url
     if not webhook_url:
@@ -75,7 +74,7 @@ def send_card(chat_id: str, title: str, text: str, actions: list[dict[str, str]]
 
 
 def _post_feishu(webhook_url: str, payload: dict[str, Any]) -> None:
-    """Best-effort Feishu HTTP POST used by async fire-and-forget sends."""
+    """异步 fire-and-forget 发送使用的尽力而为飞书 HTTP POST。"""
 
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = request.Request(
@@ -87,5 +86,5 @@ def _post_feishu(webhook_url: str, payload: dict[str, Any]) -> None:
     try:
         request.urlopen(req, timeout=5).read()
     except (error.URLError, TimeoutError):
-        # Messaging must never crash the investment pipeline.
+        # 通讯失败不能拖垮投资管道。
         return

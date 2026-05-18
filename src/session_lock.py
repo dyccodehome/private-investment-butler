@@ -1,7 +1,6 @@
-"""In-memory chat session lock and callback registry.
+"""内存版聊天会话锁与回调注册表。
 
-This is intentionally small. For multi-process deployment, replace these dicts
-with Redis while keeping the same acquire/release API.
+这里刻意保持轻量。多进程部署时可以替换为 Redis，同时保持相同的 acquire/release API。
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ _PENDING_ACTIONS: dict[str, PendingAction] = {}
 
 
 def acquire_processing(chat_id: str) -> bool:
-    """Try to mark a chat as busy. Return False if a pipeline is running."""
+    """尝试把某个 chat 标记为忙碌；若已有管道运行则返回 False。"""
 
     with _LOCK:
         if chat_id in _PROCESSING_CHAT_IDS:
@@ -37,14 +36,14 @@ def acquire_processing(chat_id: str) -> bool:
 
 
 def release_processing(chat_id: str) -> None:
-    """Clear the busy flag for a chat."""
+    """清除某个 chat 的忙碌标记。"""
 
     with _LOCK:
         _PROCESSING_CHAT_IDS.discard(chat_id)
 
 
 def mark_event_seen(event_id: str) -> bool:
-    """Return False for duplicate webhook deliveries."""
+    """对重复投递的 webhook 返回 False。"""
 
     if not event_id:
         return True
@@ -56,7 +55,7 @@ def mark_event_seen(event_id: str) -> bool:
 
 
 def save_pending_action(chat_id: str, action_id: str, reason: str, framework_id: str | None = None) -> None:
-    """Store an action that requires Human-in-the-loop confirmation."""
+    """存储一个需要人工介入确认的动作。"""
 
     with _LOCK:
         _PENDING_ACTIONS[action_id] = PendingAction(
@@ -69,7 +68,7 @@ def save_pending_action(chat_id: str, action_id: str, reason: str, framework_id:
 
 
 def pop_pending_action(action_id: str) -> PendingAction | None:
-    """Resolve and remove a pending callback action."""
+    """解析并移除一个待处理回调动作。"""
 
     with _LOCK:
         return _PENDING_ACTIONS.pop(action_id, None)

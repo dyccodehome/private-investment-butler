@@ -1,4 +1,4 @@
-"""Semantic router with bounce-back aware retry context."""
+"""带弹回上下文的语义路由器。"""
 
 from __future__ import annotations
 
@@ -13,20 +13,18 @@ FRAMEWORK_IDS = {
 
 
 def route_intent(state: AgentState) -> AgentState:
-    """Map user intent to a unique framework id.
+    """将用户意图映射到唯一的策略框架 ID。
 
-    This is intentionally transparent. A real deployment can replace the
-    heuristic block with an LLM call while preserving the same state contract.
-    The function mutates ``state.framework_id`` and appends a human-readable
-    ``route_reason`` for later audit and debugging.
+    当前实现刻意保持透明。真实部署时可以把启发式判断替换成 LLM 分类，
+    但保持同样的状态契约。函数会修改 ``state.framework_id``，
+    并追加人类可读的 ``route_reason``，方便后续审计和调试。
     """
 
     text = state.user_input.lower()
-    # Every route call counts, including retries triggered by bounce-back.
+    # 每次路由调用都计数，包括子 Agent 弹回触发的重试。
     state.route_attempts += 1
 
-    # The current version uses readable semantic hints. This can later become
-    # an LLM classifier without changing downstream modules.
+    # 当前版本使用可读的语义提示；后续可替换为 LLM 分类器，不影响下游模块。
     if any(token in text for token in ["红利", "股息", "分红", "低估值", "银行", "煤炭", "公用事业", "期权", "option", "covered call", "put", "call", "iv", "权利金", "现金流"]):
         state.framework_id = "Cash_Anchor"
         state.route_reason = "识别到现金流防守、股息或期权权利金语义。"
@@ -40,7 +38,7 @@ def route_intent(state: AgentState) -> AgentState:
         state.framework_id = "Cash_Anchor"
         state.route_reason = "语义不充分，默认交给现金锚点框架预检。"
 
-    # Feed the worker's rejection reason back into the next routing decision.
+    # 将子 Agent 的拒单原因反馈给下一次路由决策。
     if state.bounce_reason:
         state.route_reason += f" 上次拒单原因：{state.bounce_reason}"
 
