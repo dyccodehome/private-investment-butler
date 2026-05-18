@@ -15,6 +15,31 @@ FRAMEWORK_KEYWORDS = {
     "US_Disruptive_Growth": ["美股", "us", "ai", "saas", "生物科技", "英伟达", "微软", "全球", "颠覆", "tam"],
 }
 
+CASH_ANCHOR_CONTEXT_BUNDLES = {
+    "CN_Dividend_Income": {
+        "path": "sub_frameworks/CN_Dividend_Income.md",
+        "keywords": ["a股", "A股", "港股", "红利", "股息", "分红", "低估值", "银行", "煤炭", "电力", "公用事业", "运营商", "股息率"],
+    },
+    "US_Income_Options": {
+        "path": "sub_frameworks/US_Income_Options.md",
+        "keywords": [
+            "美股",
+            "us",
+            "美元",
+            "期权",
+            "option",
+            "options",
+            "covered call",
+            "cash secured put",
+            "premium",
+            "iv",
+            "put",
+            "call",
+            "权利金",
+        ],
+    },
+}
+
 
 def load_constitution(framework_id: str) -> str:
     """只加载当前被选中策略框架的宪法。
@@ -24,6 +49,46 @@ def load_constitution(framework_id: str) -> str:
 
     path = FRAMEWORKS_DIR / framework_id / "constitution.md"
     return Path(path).read_text(encoding="utf-8")
+
+
+def load_strategy_context(state: AgentState) -> str:
+    """按策略和子框架加载最小必要上下文。
+
+    普通策略只加载自己的宪法；现金流策略会先加载总纲，
+    再按用户问题选择一个 A 股或美股收益型子框架，避免一次性注入两套规则。
+    """
+
+    if not state.framework_id:
+        return ""
+
+    framework_dir = FRAMEWORKS_DIR / state.framework_id
+    context_files = [framework_dir / "constitution.md"]
+    state.context_bundle_id = state.framework_id
+
+    if state.framework_id == "Cash_Anchor":
+        bundle_id = select_cash_anchor_context_bundle(state.user_input)
+        state.context_bundle_id = bundle_id or "Cash_Anchor_Core"
+        if bundle_id:
+            bundle = CASH_ANCHOR_CONTEXT_BUNDLES[bundle_id]
+            context_files.append(framework_dir / str(bundle["path"]))
+
+    state.loaded_context_files = [str(path.relative_to(FRAMEWORKS_DIR.parent)) for path in context_files]
+    return "\n\n---\n\n".join(_read_context_file(path) for path in context_files)
+
+
+def select_cash_anchor_context_bundle(user_input: str) -> str | None:
+    """为现金流策略选择单个子框架；无法判断时返回 None。"""
+
+    text = user_input.lower()
+    scores: dict[str, int] = {}
+    for bundle_id, bundle in CASH_ANCHOR_CONTEXT_BUNDLES.items():
+        keywords = bundle["keywords"]
+        scores[bundle_id] = sum(1 for keyword in keywords if str(keyword).lower() in text)
+
+    best_bundle, best_score = max(scores.items(), key=lambda item: item[1])
+    if best_score <= 0:
+        return None
+    return best_bundle
 
 
 def intake_precheck(state: AgentState) -> AgentState:
@@ -48,10 +113,11 @@ def intake_precheck(state: AgentState) -> AgentState:
         state.status = PipelineStatus.BOUNCED
         return state
 
-    # 能加载宪法说明子 Agent 已接单，后续只在自己的策略空间内推理。
-    constitution = load_constitution(state.framework_id)
+    # 能加载策略上下文说明子 Agent 已接单，后续只在自己的策略空间内推理。
+    strategy_context = load_strategy_context(state)
+    bundle_note = f"，上下文包：{state.context_bundle_id}" if state.context_bundle_id else ""
     state.worker_notes.append(
-        f"{state.framework_id} 接单。已加载宪法 {len(constitution)} 字。"
+        f"{state.framework_id} 接单{bundle_note}。已加载上下文 {len(strategy_context)} 字。"
     )
     return state
 
@@ -93,7 +159,7 @@ def stage_two_decide(state: AgentState) -> AgentState:
     """
 
     data_names = ", ".join(item.skill_name for item in state.disclosed_data) or "no data"
-    constitution = load_constitution(state.framework_id or "")
+    strategy_context = load_strategy_context(state)
     client = LLMClient.for_framework(state.framework_id)
     state.draft_decision = client.complete(
         system_prompt=(
@@ -102,7 +168,9 @@ def stage_two_decide(state: AgentState) -> AgentState:
         ),
         user_prompt=(
             f"策略框架：{state.framework_id}\n"
-            f"策略宪法：\n{constitution}\n\n"
+            f"上下文包：{state.context_bundle_id}\n"
+            f"已加载上下文文件：{state.loaded_context_files}\n"
+            f"策略上下文：\n{strategy_context}\n\n"
             f"用户原话：{state.user_input}\n\n"
             f"已披露数据来源：{data_names}\n"
             f"已披露数据：{_compact_disclosed_data_for_prompt(state)}\n\n"
@@ -111,6 +179,7 @@ def stage_two_decide(state: AgentState) -> AgentState:
         agent_role="worker",
         call_site="sub_agent.stage_two_decide",
         framework_id=state.framework_id,
+        context_bundle_id=state.context_bundle_id,
         chat_id=state.chat_id,
         user_query=state.user_input,
     )
@@ -123,6 +192,13 @@ def _extract_symbol_placeholder(user_input: str) -> str:
     """临时标的提取器，后续可替换为真正的实体解析器。"""
 
     return user_input.strip().split()[0] if user_input.strip() else "UNKNOWN"
+
+
+def _read_context_file(path: Path) -> str:
+    """读取策略上下文文件，并在提示词中保留相对路径来源。"""
+
+    relative_path = path.relative_to(FRAMEWORKS_DIR.parent)
+    return f"# 来源：{relative_path}\n\n{path.read_text(encoding='utf-8')}"
 
 
 def _compact_disclosed_data_for_prompt(state: AgentState) -> str:

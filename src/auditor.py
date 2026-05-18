@@ -107,6 +107,7 @@ def _run_audit_llm(state: AgentState, persona: str) -> str:
         agent_role="auditor",
         call_site="auditor.audit_before_output",
         framework_id=state.framework_id,
+        context_bundle_id=state.context_bundle_id,
         chat_id=state.chat_id,
         user_query=state.user_input,
     )

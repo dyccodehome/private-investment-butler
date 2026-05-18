@@ -32,6 +32,7 @@ def main() -> None:
     _print_totals(records)
     _print_group(records, "agent_role", "By Agent Role")
     _print_group(records, "framework_id", "By Framework")
+    _print_group(records, "context_bundle_id", "By Context Bundle")
     _print_group(records, "call_site", "By Call Site")
     _print_top(records, args.top)
 
@@ -86,6 +87,7 @@ def _print_top(records: list[dict[str, Any]], limit: int) -> None:
             f"{int(row.get('total_tokens') or 0):8} | "
             f"{row.get('agent_role') or 'unknown':8} | "
             f"{row.get('framework_id') or 'unknown':22} | "
+            f"{row.get('context_bundle_id') or 'unknown':22} | "
             f"{row.get('call_site') or 'unknown'}"
         )
         print(f"         query: {(row.get('user_query') or '')[:100]}")

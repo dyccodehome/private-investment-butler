@@ -56,6 +56,8 @@ class AgentState:
     user_input: str
     chat_id: str | None = None
     framework_id: str | None = None
+    context_bundle_id: str | None = None
+    loaded_context_files: list[str] = field(default_factory=list)
     route_reason: str | None = None
     route_attempts: int = 0
     bounce_back: bool = False
@@ -80,6 +82,8 @@ class AgentState:
 
         # 只清理分配相关字段；保留尝试次数和 bounce_reason 作为链路痕迹。
         self.framework_id = None
+        self.context_bundle_id = None
+        self.loaded_context_files = []
         self.route_reason = None
         self.bounce_back = False
         self.status = PipelineStatus.RUNNING

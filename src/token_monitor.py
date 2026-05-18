@@ -29,6 +29,7 @@ def record_token_usage(
     latency_ms: int,
     status: str,
     error: str = "",
+    context_bundle_id: str | None = None,
 ) -> Path | None:
     """追加一条模型调用用量记录。
 
@@ -50,6 +51,7 @@ def record_token_usage(
         "agent_role": agent_role,
         "call_site": call_site,
         "framework_id": framework_id,
+        "context_bundle_id": context_bundle_id,
         "chat_id": chat_id,
         "user_query": user_query,
         "input_tokens": usage["input_tokens"],

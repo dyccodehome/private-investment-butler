@@ -53,7 +53,8 @@ def run_pipeline(user_input: str, chat_id: str = "cli") -> AgentState:
         # 3. 子 Agent 在最终推理前申请最小必要数据。
         communication_gate.send(
             chat_id,
-            f"🔄 已锁定【{state.framework_id}】，子 Agent 正在申请按需披露的 Skill...",
+            f"🔄 已锁定【{state.framework_id} / {state.context_bundle_id or '默认上下文'}】，"
+            "子 Agent 正在申请按需披露的 Skill...",
         )
         state = stage_one_request_skills(state)
 

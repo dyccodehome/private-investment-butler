@@ -70,6 +70,8 @@ def _build_record(state: AgentState, timestamp: datetime) -> dict[str, Any]:
         "timestamp": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
         "chat_id": state.chat_id,
         "framework_id": state.framework_id,
+        "context_bundle_id": state.context_bundle_id,
+        "loaded_context_files": state.loaded_context_files,
         "route_reason": state.route_reason,
         "route_attempts": state.route_attempts,
         "user_query": state.user_input,
