@@ -7,14 +7,19 @@ Agent 其他模块只调用这一层，不直接依赖厂商 SDK。
 from __future__ import annotations
 
 import json
+import ssl
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib import error, request
 
 from src.app_config import FrameworkLLMSettings, get_config
 from src import communication_gate
 from src.token_monitor import build_token_warning, record_token_usage
+
+
+SYSTEM_CA_PATH = Path("/etc/ssl/cert.pem")
 
 
 @dataclass(frozen=True)
@@ -161,7 +166,7 @@ class LLMClient:
             method="POST",
         )
         try:
-            with request.urlopen(req, timeout=self.timeout_seconds) as resp:
+            with request.urlopen(req, timeout=self.timeout_seconds, context=_ssl_context()) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
@@ -186,3 +191,18 @@ def _extract_response_text(response: dict[str, Any]) -> str:
         return "\n".join(chunks)
 
     return json.dumps(response, ensure_ascii=False)
+
+
+def _ssl_context() -> ssl.SSLContext:
+    """创建 HTTPS 校验证书上下文。
+
+    macOS 的 python.org 发行版有时不会自动指向系统 CA 文件。
+    如果默认上下文没有 cafile，则使用系统证书链，不降低 TLS 校验强度。
+    """
+
+    paths = ssl.get_default_verify_paths()
+    if paths.cafile:
+        return ssl.create_default_context()
+    if SYSTEM_CA_PATH.exists():
+        return ssl.create_default_context(cafile=str(SYSTEM_CA_PATH))
+    return ssl.create_default_context()
