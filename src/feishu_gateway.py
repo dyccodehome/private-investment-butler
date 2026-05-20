@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import base64
+import hashlib
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Request
@@ -26,14 +28,17 @@ app = FastAPI(title="Private Investment Butler Feishu Gateway")
 async def receive_feishu_event(request: Request, background_tasks: BackgroundTasks) -> dict[str, Any]:
     """接收飞书消息，立即返回，并在后台运行 Agent。"""
 
-    payload = await request.json()
-
-    if not _verify_feishu_token(payload):
-        return {"code": 0, "msg": "verification failed"}
+    raw_body = await request.body()
+    payload = _load_feishu_payload(raw_body)
 
     # 飞书 URL 校验 challenge。
-    if "challenge" in payload:
+    if payload.get("type") == "url_verification" or "challenge" in payload:
+        if not _verify_url_challenge_token(payload):
+            return {"code": 0, "msg": "verification failed"}
         return {"challenge": payload["challenge"]}
+
+    if not _verify_feishu_token(payload) or not _verify_feishu_signature(request, raw_body):
+        return {"code": 0, "msg": "verification failed"}
 
     event_id = _extract_event_id(payload)
     if not mark_event_seen(event_id):
@@ -57,8 +62,9 @@ async def receive_feishu_event(request: Request, background_tasks: BackgroundTas
 async def receive_feishu_callback(request: Request) -> dict[str, Any]:
     """接收飞书交互卡片按钮点击。"""
 
-    payload = await request.json()
-    if not _verify_feishu_token(payload):
+    raw_body = await request.body()
+    payload = _load_feishu_payload(raw_body)
+    if not _verify_feishu_token(payload) or not _verify_feishu_signature(request, raw_body):
         return {"code": 0, "msg": "verification failed"}
 
     value = _extract_callback_value(payload)
@@ -134,12 +140,54 @@ def _verify_feishu_token(payload: dict[str, Any]) -> bool:
     return actual == expected
 
 
+def _verify_url_challenge_token(payload: dict[str, Any]) -> bool:
+    """校验 URL verification 事件里的 token。"""
+
+    expected = get_config().messaging().verification_token
+    if not expected:
+        return True
+    return str(payload.get("token") or "") == expected
+
+
+def _verify_feishu_signature(request: Request, raw_body: bytes) -> bool:
+    """按飞书官方 demo 校验 X-Lark-Signature。"""
+
+    encrypt_key = get_config().messaging().encrypt_key
+    if not encrypt_key:
+        return True
+
+    timestamp = request.headers.get("X-Lark-Request-Timestamp", "")
+    nonce = request.headers.get("X-Lark-Request-Nonce", "")
+    signature = request.headers.get("X-Lark-Signature", "")
+    if not timestamp or not nonce or not signature:
+        return False
+
+    digest = hashlib.sha256()
+    digest.update((timestamp + nonce + encrypt_key).encode("utf-8"))
+    digest.update(raw_body)
+    return digest.hexdigest() == signature
+
+
+def _load_feishu_payload(raw_body: bytes) -> dict[str, Any]:
+    """解析飞书回调 JSON；配置加密时解开 ``encrypt`` 数据。"""
+
+    payload = json.loads(raw_body.decode("utf-8") or "{}")
+    encrypt_data = payload.get("encrypt")
+    if not encrypt_data:
+        return payload
+
+    encrypt_key = get_config().messaging().encrypt_key
+    if not encrypt_key:
+        raise ValueError("FEISHU_ENCRYPT_KEY is required for encrypted callback")
+    return json.loads(_decrypt_feishu_payload(str(encrypt_data), encrypt_key))
+
+
 def _extract_chat_id(payload: dict[str, Any]) -> str:
     """从常见事件结构中提取飞书 chat_id。"""
 
     event = payload.get("event", {})
     message = event.get("message", {})
-    return str(message.get("chat_id") or event.get("open_chat_id") or "")
+    return str(message.get("chat_id") or event.get("open_chat_id") or event.get("chat_id") or "")
 
 
 def _extract_text(payload: dict[str, Any]) -> str:
@@ -161,8 +209,29 @@ def _extract_text(payload: dict[str, Any]) -> str:
 def _extract_callback_value(payload: dict[str, Any]) -> dict[str, str]:
     """从飞书回调 payload 中提取卡片按钮 value。"""
 
-    action = payload.get("action", {})
+    action = payload.get("action") or payload.get("event", {}).get("action", {})
     value = action.get("value", {})
     if isinstance(value, dict):
         return {str(k): str(v) for k, v in value.items()}
     return {}
+
+
+def _decrypt_feishu_payload(encrypt_data: str, encrypt_key: str) -> str:
+    """解密飞书加密回调。
+
+    逻辑来自官方 demo：sha256(encrypt_key) 作为 AES-CBC key，
+    密文前 16 字节为 IV，尾部使用 PKCS#7 padding。
+    """
+
+    try:
+        from Crypto.Cipher import AES  # type: ignore
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("请安装 pycryptodome 以支持飞书加密回调") from exc
+
+    encrypted_bytes = base64.b64decode(encrypt_data)
+    key = hashlib.sha256(encrypt_key.encode("utf-8")).digest()
+    iv = encrypted_bytes[: AES.block_size]
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    decrypted = cipher.decrypt(encrypted_bytes[AES.block_size :])
+    padding = decrypted[-1]
+    return decrypted[:-padding].decode("utf-8")

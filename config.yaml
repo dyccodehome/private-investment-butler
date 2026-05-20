@@ -42,6 +42,9 @@ frameworks:
 
 messaging:
   provider: feishu
+  app_id_env: FEISHU_APP_ID
+  app_secret_env: FEISHU_APP_SECRET
+  lark_host: https://open.feishu.cn
   webhook_url_env: FEISHU_WEBHOOK_URL
   verification_token_env: FEISHU_VERIFICATION_TOKEN
   encrypt_key_env: FEISHU_ENCRYPT_KEY

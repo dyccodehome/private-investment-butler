@@ -220,6 +220,8 @@ python3 scripts/token_report.py --date 2026-05-17 --top 10
 真实密钥只放环境变量：
 
 - `OPENAI_API_KEY`
+- `FEISHU_APP_ID`
+- `FEISHU_APP_SECRET`
 - `FEISHU_WEBHOOK_URL`
 - `FEISHU_VERIFICATION_TOKEN`
 - `FEISHU_ENCRYPT_KEY`

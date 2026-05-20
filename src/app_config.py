@@ -48,6 +48,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "messaging": {
         "provider": "feishu",
+        "app_id_env": "FEISHU_APP_ID",
+        "app_secret_env": "FEISHU_APP_SECRET",
+        "lark_host": "https://open.feishu.cn",
         "webhook_url_env": "FEISHU_WEBHOOK_URL",
         "verification_token_env": "FEISHU_VERIFICATION_TOKEN",
         "encrypt_key_env": "FEISHU_ENCRYPT_KEY",
@@ -97,6 +100,9 @@ class MessagingSettings:
     """消息发送与飞书校验的运行时配置。"""
 
     provider: str
+    app_id: str
+    app_secret: str
+    lark_host: str
     webhook_url: str
     verification_token: str
     encrypt_key: str
@@ -135,6 +141,9 @@ class AppConfig:
         section = self.raw["messaging"]
         return MessagingSettings(
             provider=str(section.get("provider", "feishu")),
+            app_id=os.getenv(str(section.get("app_id_env", "FEISHU_APP_ID")), ""),
+            app_secret=os.getenv(str(section.get("app_secret_env", "FEISHU_APP_SECRET")), ""),
+            lark_host=str(section.get("lark_host", "https://open.feishu.cn")).rstrip("/"),
             webhook_url=os.getenv(str(section["webhook_url_env"]), ""),
             verification_token=os.getenv(str(section["verification_token_env"]), ""),
             encrypt_key=os.getenv(str(section["encrypt_key_env"]), ""),
