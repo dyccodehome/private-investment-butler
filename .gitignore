@@ -26,6 +26,14 @@ frameworks/*/logs/*
 frameworks/*/chat_history/*
 !frameworks/*/chat_history/.gitkeep
 
+frameworks/*/data/*
+!frameworks/*/data/.gitkeep
+
+frameworks/*/reports/**/*.md
+frameworks/*/reports/**/*.json
+frameworks/*/reports/**/*.csv
+!frameworks/*/reports/**/.gitkeep
+
 # Runtime ledgers and generated local state
 runtime/*
 !runtime/.gitkeep

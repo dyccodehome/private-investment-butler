@@ -10,10 +10,28 @@ from src.state import AgentState, PipelineStatus, SkillRequest
 
 
 FRAMEWORK_KEYWORDS = {
-    "Cash_Anchor": ["现金流", "红利", "股息", "分红", "低估值", "银行", "煤炭", "公用事业", "期权", "option", "covered call", "put", "call", "iv", "权利金"],
+    "Cash_Anchor": ["现金流", "红利", "股息", "分红", "低估值", "银行", "煤炭", "公用事业", "期权", "option", "covered call", "put", "call", "iv", "权利金", "退休", "持仓", "投入", "工资", "进度"],
     "CN_Alpha_Growth": ["a股", "中国", "成长", "科技自立", "出海", "半导体", "新能源", "ma120", "产业升级", "本土"],
     "US_Disruptive_Growth": ["美股", "us", "ai", "saas", "生物科技", "英伟达", "微软", "全球", "颠覆", "tam"],
 }
+
+CASH_ANCHOR_LEDGER_KEYWORDS = [
+    "持仓",
+    "成本",
+    "成本价",
+    "股息率",
+    "分红",
+    "红利",
+    "退休",
+    "工资",
+    "投入",
+    "追加",
+    "本金",
+    "进度",
+    "年度目标",
+    "现金流目标",
+    "今年会分多少",
+]
 
 CASH_ANCHOR_CONTEXT_BUNDLES = {
     "CN_Dividend_Income": {
@@ -134,18 +152,31 @@ def stage_one_request_skills(state: AgentState) -> AgentState:
         return state
 
     symbol = _extract_symbol_placeholder(state.user_input)
-    state.requested_skills = [
-        SkillRequest(
-            skill_name="hithink-market-query",
-            arguments={"symbol": symbol},
-            reason="需要通过同花顺问财行情 Skill 获取实时市场事实。",
-        ),
-        SkillRequest(
-            skill_name="trade_history",
-            arguments={"symbol": symbol},
-            reason="需要读取历史决策逻辑，避免重复犯错。",
-        ),
-    ]
+    requested_skills: list[SkillRequest] = []
+    if _needs_cash_anchor_ledger(state):
+        requested_skills.append(
+            SkillRequest(
+                skill_name="portfolio_snapshot",
+                arguments={"scope": "cash_anchor_dividend_retirement"},
+                reason="需要读取 Cash_Anchor 本地持仓、年度投入和退休分红目标账本，进行确定性计算。",
+            )
+        )
+
+    requested_skills.extend(
+        [
+            SkillRequest(
+                skill_name="hithink-market-query",
+                arguments={"symbol": symbol},
+                reason="需要通过同花顺问财行情 Skill 获取实时市场事实。",
+            ),
+            SkillRequest(
+                skill_name="trade_history",
+                arguments={"symbol": symbol},
+                reason="需要读取历史决策逻辑，避免重复犯错。",
+            ),
+        ]
+    )
+    state.requested_skills = requested_skills
     # 通知主管道暂停子 Agent 推理，先满足数据申请。
     state.status = PipelineStatus.NEEDS_DISCLOSURE
     return state
@@ -192,6 +223,15 @@ def _extract_symbol_placeholder(user_input: str) -> str:
     """临时标的提取器，后续可替换为真正的实体解析器。"""
 
     return user_input.strip().split()[0] if user_input.strip() else "UNKNOWN"
+
+
+def _needs_cash_anchor_ledger(state: AgentState) -> bool:
+    """判断本轮 Cash_Anchor 是否需要披露本地现金流账本。"""
+
+    if state.framework_id != "Cash_Anchor":
+        return False
+    text = state.user_input.lower()
+    return any(keyword.lower() in text for keyword in CASH_ANCHOR_LEDGER_KEYWORDS)
 
 
 def _read_context_file(path: Path) -> str:

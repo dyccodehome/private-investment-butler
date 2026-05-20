@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from src.init import SKILLS_DIR
+from src.portfolio_ledger import build_portfolio_snapshot
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,7 @@ class LoadedSkill:
     path: Path
     instructions: str
     arguments: dict[str, Any]
+    payload: dict[str, Any] | None = None
 
     def to_payload(self) -> dict[str, Any]:
         """将已加载 Skill 转换为紧凑披露元数据。
@@ -40,12 +42,15 @@ class LoadedSkill:
         路径会保留，方便后续节点在确实需要时显式重新加载完整 Skill。
         """
 
-        return {
+        base_payload = {
             "skill_id": self.skill_id,
             "description": self.description,
             "path": str(self.path),
             "arguments": self.arguments,
         }
+        if self.payload is not None:
+            base_payload["result"] = self.payload
+        return base_payload
 
 
 SKILL_ALIASES: dict[str, str] = {
@@ -69,12 +74,15 @@ def load_skill(skill_id: str, arguments: dict[str, Any] | None = None) -> Loaded
     if not skill_path.exists():
         raise FileNotFoundError(f"Skill entry file not found: {skill_path}")
 
+    payload = _execute_skill_payload(spec.skill_id, arguments or {})
+
     return LoadedSkill(
         skill_id=spec.skill_id,
         description=spec.description,
         path=skill_path,
         instructions=skill_path.read_text(encoding="utf-8"),
         arguments=arguments or {},
+        payload=payload,
     )
 
 
@@ -121,6 +129,14 @@ def _discover_skills() -> dict[str, SkillSpec]:
             description=_read_frontmatter_description(entry_path) or f"加载 {skill_id} Skill。",
         )
     return registry
+
+
+def _execute_skill_payload(skill_id: str, arguments: dict[str, Any]) -> dict[str, Any] | None:
+    """对少数本地确定性 Skill 直接执行并返回披露结果。"""
+
+    if skill_id == "portfolio_snapshot":
+        return build_portfolio_snapshot()
+    return None
 
 
 def _read_frontmatter_description(path: Path) -> str:

@@ -1,0 +1,2 @@
+symbol,name,market,currency,shares,cost_price,current_price,annual_dividend_per_share,tax_rate,notes
+600000,示例银行,A股,CNY,1000,10.00,10.50,0.40,0.00,示例：真实持仓请放入 data/holdings.csv

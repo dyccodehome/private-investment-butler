@@ -1,0 +1,2 @@
+date,amount,currency,source,notes
+2026-01-01,10000,CNY,salary,示例：真实工资投入请放入 data/capital_flows.csv
