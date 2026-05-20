@@ -72,3 +72,14 @@ def pop_pending_action(action_id: str) -> PendingAction | None:
 
     with _LOCK:
         return _PENDING_ACTIONS.pop(action_id, None)
+
+
+def runtime_status() -> dict[str, int]:
+    """返回网关内存状态快照，供 /status 命令展示。"""
+
+    with _LOCK:
+        return {
+            "processing_chats": len(_PROCESSING_CHAT_IDS),
+            "seen_events": len(_SEEN_EVENT_IDS),
+            "pending_actions": len(_PENDING_ACTIONS),
+        }

@@ -6,7 +6,9 @@ from uuid import uuid4
 
 from src.auditor import audit_before_output, enforce_circuit_breaker
 from src import communication_gate
+from src.command_registry import handle_command
 from src.context_logger import save_chat_session
+from src.error_classifier import classify_error
 from src.master_router import route_intent
 from src.skills import load_skill
 from src.state import AgentState, DisclosureRecord, PipelineStatus
@@ -76,17 +78,22 @@ def run_pipeline(user_input: str, chat_id: str = "cli") -> AgentState:
             state.requested_skills.clear()
             state.status = PipelineStatus.RUNNING
 
-        # 5. 子 Agent 生成决策草案，随后由 AOP 审计层拦截。
-        state = stage_two_decide(state)
-        communication_gate.send(
-            chat_id,
-            "⚖️ 核心决策已生成，正在唤醒切面审计中间件进行反方逻辑对撞...",
-        )
-        state = audit_before_output(state)
-        state = enforce_circuit_breaker(state)
-        _send_terminal_result(chat_id, state)
-        save_chat_session(state)
-        return state
+        try:
+            # 5. 子 Agent 生成决策草案，随后由 AOP 审计层拦截。
+            state = stage_two_decide(state)
+            communication_gate.send(
+                chat_id,
+                "⚖️ 核心决策已生成，正在唤醒切面审计中间件进行反方逻辑对撞...",
+            )
+            state = audit_before_output(state)
+            state = enforce_circuit_breaker(state)
+            _send_terminal_result(chat_id, state)
+            save_chat_session(state)
+            return state
+        except Exception as exc:
+            _handle_pipeline_error(state, chat_id, exc)
+            save_chat_session(state)
+            return state
 
 
 def _send_terminal_result(chat_id: str, state: AgentState) -> None:
@@ -114,10 +121,28 @@ def _send_terminal_result(chat_id: str, state: AgentState) -> None:
     communication_gate.send(chat_id, state.final_answer or "\n".join(state.errors))
 
 
+def _handle_pipeline_error(state: AgentState, chat_id: str, exc: BaseException) -> None:
+    """把模型/API 异常转换为可读失败状态，而不是让后台任务崩栈。"""
+
+    classified = classify_error(exc)
+    state.status = PipelineStatus.FAILED
+    state.errors.append(f"{classified.kind.value}: {classified.raw_message}")
+    state.final_answer = (
+        f"流程已暂停：{classified.user_message}\n\n"
+        f"错误分类：{classified.kind.value}\n"
+        f"是否建议自动重试：{'是' if classified.retryable else '否'}"
+    )
+    communication_gate.send(chat_id, state.final_answer)
+
+
 def main() -> None:
     """用于手动演练管道的命令行入口。"""
 
     user_input = input("User> ").strip()
+    command_reply = handle_command(user_input, "cli")
+    if command_reply is not None:
+        print(command_reply)
+        return
     run_pipeline(user_input, chat_id="cli")
 
 

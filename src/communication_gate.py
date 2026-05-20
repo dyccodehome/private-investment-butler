@@ -26,6 +26,10 @@ SYSTEM_CA_PATH = Path("/etc/ssl/cert.pem")
 def send(chat_id: str, text: str) -> None:
     """非阻塞地把文本推送到已配置的聊天通道。"""
 
+    if chat_id == "cli":
+        print(f"[{chat_id}] {text}")
+        return
+
     settings = get_config().messaging()
     if settings.app_id and settings.app_secret:
         payload = {
@@ -49,6 +53,11 @@ def send(chat_id: str, text: str) -> None:
 
 def send_card(chat_id: str, title: str, text: str, actions: list[dict[str, str]]) -> None:
     """推送带动作按钮的飞书交互卡片。"""
+
+    if chat_id == "cli":
+        action_labels = " / ".join(action["label"] for action in actions)
+        print(f"[{chat_id}] {title}\n{text}\nActions: {action_labels}")
+        return
 
     settings = get_config().messaging()
     card = _build_interactive_card(chat_id, title, text, actions)

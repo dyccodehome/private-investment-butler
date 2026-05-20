@@ -12,6 +12,7 @@ from fastapi import BackgroundTasks, FastAPI, Request
 from main import run_pipeline
 from src import communication_gate
 from src.app_config import get_config
+from src.command_registry import handle_command, help_text
 from src.context_logger import save_user_action
 from src.session_lock import (
     acquire_processing,
@@ -48,6 +49,14 @@ async def receive_feishu_event(request: Request, background_tasks: BackgroundTas
     text = _extract_text(payload)
     if not chat_id or not text:
         return {"code": 0, "msg": "ignored unsupported event"}
+
+    command_reply = handle_command(text, chat_id)
+    if command_reply is not None:
+        communication_gate.send(chat_id, command_reply)
+        return {"code": 0, "msg": "command handled"}
+    if text.strip().startswith("/"):
+        communication_gate.send(chat_id, "未知命令。可发送 /help 查看可用命令。\n\n" + help_text())
+        return {"code": 0, "msg": "unknown command"}
 
     if not acquire_processing(chat_id):
         communication_gate.send(chat_id, "管家正在为您全力审计上一条决策，请勿频繁轰炸。")
