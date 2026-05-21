@@ -6,6 +6,7 @@ import json
 import base64
 import hashlib
 from typing import Any
+from uuid import uuid4
 
 from fastapi import BackgroundTasks, FastAPI, Request
 
@@ -14,6 +15,13 @@ from src import communication_gate
 from src.app_config import get_config
 from src.command_registry import handle_command, help_text
 from src.context_logger import save_user_action
+from src.knowledge_absorber import (
+    accept_patch_proposal,
+    format_patch_proposal_for_user,
+    mark_patch_proposal,
+    parse_absorb_args,
+    run_knowledge_absorption,
+)
 from src.session_lock import (
     acquire_processing,
     mark_event_seen,
@@ -49,6 +57,19 @@ async def receive_feishu_event(request: Request, background_tasks: BackgroundTas
     text = _extract_text(payload)
     if not chat_id or not text:
         return {"code": 0, "msg": "ignored unsupported event"}
+
+    if text.strip().startswith("/absorb"):
+        try:
+            framework_id, source_text = parse_absorb_args(text.strip().removeprefix("/absorb").strip())
+        except ValueError as exc:
+            communication_gate.send(chat_id, str(exc))
+            return {"code": 0, "msg": "absorb usage error"}
+        communication_gate.send(
+            chat_id,
+            "📥 已收到新知识，正在启动‘宪法再造’漏斗。生成冲突报告后会推送审批卡片。",
+        )
+        background_tasks.add_task(_run_absorb_background, chat_id, framework_id, source_text)
+        return {"code": 0, "msg": "absorb received"}
 
     command_reply = handle_command(text, chat_id)
     if command_reply is not None:
@@ -87,7 +108,9 @@ async def receive_feishu_callback(request: Request) -> dict[str, Any]:
             communication_gate.send(chat_id, "该裁决已过期或已处理。")
         return {"code": 0, "msg": "no pending action"}
 
-    if action == "force_execute":
+    if action in {"accept_constitution_patch", "observe_constitution_patch", "reject_constitution_patch"}:
+        _handle_patch_callback(action, pending.chat_id, pending.framework_id, pending.reason)
+    elif action == "force_execute":
         reply = "已记录：主人驳回风控官意见，选择强行执行。后续将把该行为写入审计归因日志。"
         communication_gate.send(
             pending.chat_id,
@@ -123,6 +146,54 @@ def _run_agent_background(chat_id: str, text: str) -> None:
         run_pipeline(text, chat_id=chat_id)
     finally:
         release_processing(chat_id)
+
+
+def _run_absorb_background(chat_id: str, framework_id: str, source_text: str) -> None:
+    """后台运行宪法再造管道并推送审批卡片。"""
+
+    proposal = run_knowledge_absorption(framework_id, source_text, chat_id=chat_id)
+    text = format_patch_proposal_for_user(proposal)
+    if proposal.status != "proposed":
+        communication_gate.send(chat_id, text)
+        return
+
+    action_id = str(uuid4())
+    save_pending_action(
+        chat_id=chat_id,
+        action_id=action_id,
+        framework_id=framework_id,
+        reason=proposal.patch_id,
+    )
+    communication_gate.send_card(
+        chat_id,
+        f"宪法进化提案 {proposal.patch_id}",
+        text,
+        [
+            {"label": "同意并打入宪法", "action": "accept_constitution_patch", "type": "primary", "state_id": action_id},
+            {"label": "进入观察池", "action": "observe_constitution_patch", "type": "default", "state_id": action_id},
+            {"label": "拒绝修改", "action": "reject_constitution_patch", "type": "danger", "state_id": action_id},
+        ],
+    )
+
+
+def _handle_patch_callback(action: str, chat_id: str, framework_id: str | None, patch_id: str) -> None:
+    """处理宪法补丁审批按钮。"""
+
+    if not framework_id:
+        communication_gate.send(chat_id, "补丁审批失败：缺少 framework_id。")
+        return
+    try:
+        if action == "accept_constitution_patch":
+            archive_path = accept_patch_proposal(framework_id, patch_id)
+            communication_gate.send(chat_id, f"已打入宪法并完成本地 Git commit：{patch_id}\n归档：{archive_path}")
+        elif action == "observe_constitution_patch":
+            archive_path = mark_patch_proposal(framework_id, patch_id, "observing")
+            communication_gate.send(chat_id, f"已放入观察池：{patch_id}\n归档：{archive_path}")
+        elif action == "reject_constitution_patch":
+            archive_path = mark_patch_proposal(framework_id, patch_id, "rejected")
+            communication_gate.send(chat_id, f"已拒绝该宪法补丁：{patch_id}\n归档：{archive_path}")
+    except Exception as exc:
+        communication_gate.send(chat_id, f"补丁审批执行失败：{exc}")
 
 
 def _extract_event_id(payload: dict[str, Any]) -> str:

@@ -251,7 +251,51 @@ frameworks/research_templates/dossier_schema.json
 
 连成闭环。
 
-## 13. 配置与密钥
+## 13. 宪法再造与知识吸收
+
+模块：`src/knowledge_absorber.py`
+
+入口命令：
+
+```text
+/absorb <framework_id> <文章链接、摘录或你的思考>
+```
+
+它用于把外部碎片知识转化为投资框架补丁提案，而不是把文章原文塞进长期上下文。
+
+流程：
+
+```text
+碎片输入
+  -> 要素提炼
+  -> 适用边界识别
+  -> 与 Constitution.md 冲突检测
+  -> 反方审计
+  -> Patch Proposal JSON
+  -> 人类按钮裁决
+```
+
+每个策略岛都有三类本地私有目录：
+
+```text
+frameworks/{framework_id}/knowledge_inbox/
+frameworks/{framework_id}/patch_proposals/
+frameworks/{framework_id}/patch_archive/
+```
+
+这些真实内容默认被 Git 忽略，避免把个人阅读材料、草案和决策过程公开。
+
+飞书中的 `/absorb` 必须异步处理：HTTP 入口秒回，后台生成提案，再推送审批卡片。
+
+审批按钮：
+
+- `同意并打入宪法`
+- `进入观察池`
+- `拒绝修改`
+
+同意打补丁前必须检查目标 `constitution.md` 是否有未提交改动。若存在人工草稿，必须拒绝自动写入，避免把人工修改和自动补丁混成一次提交。
+
+## 14. 配置与密钥
 
 模板：`.env.example`
 
@@ -271,7 +315,7 @@ frameworks/research_templates/dossier_schema.json
 
 `config.yaml` 只记录默认值和环境变量名，不存储真实密钥。
 
-## 14. 本地验证
+## 15. 本地验证
 
 ```bash
 python3 -m compileall private_investment_butler
@@ -287,7 +331,7 @@ python3 scripts/token_report.py --date 2026-05-17
 uvicorn src.feishu_gateway:app --host 0.0.0.0 --port 8000
 ```
 
-## 15. 开发约束
+## 16. 开发约束
 
 - 不引入重型状态机框架。
 - 不跨策略岛读取宪法。

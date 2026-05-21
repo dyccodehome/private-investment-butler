@@ -32,6 +32,15 @@ frameworks/*/data/*
 frameworks/*/research_dossiers/*
 !frameworks/*/research_dossiers/.gitkeep
 
+frameworks/*/knowledge_inbox/*
+!frameworks/*/knowledge_inbox/.gitkeep
+
+frameworks/*/patch_proposals/*
+!frameworks/*/patch_proposals/.gitkeep
+
+frameworks/*/patch_archive/*
+!frameworks/*/patch_archive/.gitkeep
+
 frameworks/*/reports/**/*.md
 frameworks/*/reports/**/*.json
 frameworks/*/reports/**/*.csv

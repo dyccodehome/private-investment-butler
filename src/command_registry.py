@@ -31,6 +31,12 @@ COMMAND_REGISTRY: list[CommandDef] = [
     CommandDef("status", "查看当前 Agent 运行状态", "Info"),
     CommandDef("usage", "查看今日模型 Token 用量", "Info"),
     CommandDef("frameworks", "查看当前启用的投资策略框架", "Info", aliases=("fw",)),
+    CommandDef(
+        "absorb",
+        "吸收外部知识并生成宪法补丁提案",
+        "Knowledge",
+        args_hint="<framework_id> <文章链接、摘录或你的思考>",
+    ),
 ]
 
 
@@ -63,6 +69,7 @@ def handle_command(raw_text: str, chat_id: str) -> str | None:
         "status": _handle_status,
         "usage": _handle_usage,
         "frameworks": _handle_frameworks,
+        "absorb": _handle_absorb,
     }
     handler = handlers.get(command.name)
     if not handler:
@@ -109,3 +116,15 @@ def _handle_frameworks(args: str, chat_id: str) -> str:
         "- CN_Alpha_Growth：A 股成长股策略岛\n"
         "- US_Disruptive_Growth：美股颠覆性成长策略岛"
     )
+
+
+def _handle_absorb(args: str, chat_id: str) -> str:
+    from src.knowledge_absorber import (
+        format_patch_proposal_for_user,
+        parse_absorb_args,
+        run_knowledge_absorption,
+    )
+
+    framework_id, source_text = parse_absorb_args(args)
+    proposal = run_knowledge_absorption(framework_id, source_text, chat_id=chat_id)
+    return format_patch_proposal_for_user(proposal)
