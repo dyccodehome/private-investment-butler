@@ -12,6 +12,7 @@ from typing import Any
 
 from src.init import SKILLS_DIR
 from src.portfolio_ledger import build_portfolio_snapshot
+from src.research_dossier import build_research_dossier_snapshot
 
 
 @dataclass(frozen=True)
@@ -136,6 +137,12 @@ def _execute_skill_payload(skill_id: str, arguments: dict[str, Any]) -> dict[str
 
     if skill_id == "portfolio_snapshot":
         return build_portfolio_snapshot()
+    if skill_id == "research_dossier":
+        return build_research_dossier_snapshot(
+            framework_id=arguments.get("framework_id"),
+            symbol=arguments.get("symbol"),
+            user_query=str(arguments.get("user_query") or ""),
+        )
     return None
 
 

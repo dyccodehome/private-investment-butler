@@ -34,6 +34,7 @@ def save_chat_session(state: AgentState) -> Path:
     with log_path.open("a", encoding="utf-8") as file:
         file.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
 
+    _try_append_research_dossier_decision(state)
     return log_path
 
 
@@ -98,3 +99,14 @@ def _compact_disclosure(item: Any) -> dict[str, Any]:
         "arguments": item.arguments,
         "payload": payload,
     }
+
+
+def _try_append_research_dossier_decision(state: AgentState) -> None:
+    """把相关交互追加到个股研究档案；失败不影响主会话归档。"""
+
+    try:
+        from src.research_dossier import append_decision_to_dossier
+
+        append_decision_to_dossier(state)
+    except Exception:
+        return

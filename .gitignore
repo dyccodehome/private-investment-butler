@@ -29,6 +29,9 @@ frameworks/*/chat_history/*
 frameworks/*/data/*
 !frameworks/*/data/.gitkeep
 
+frameworks/*/research_dossiers/*
+!frameworks/*/research_dossiers/.gitkeep
+
 frameworks/*/reports/**/*.md
 frameworks/*/reports/**/*.json
 frameworks/*/reports/**/*.csv

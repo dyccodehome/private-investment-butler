@@ -6,6 +6,7 @@ from pathlib import Path
 
 from src.init import FRAMEWORKS_DIR
 from src.llm_client import LLMClient
+from src.research_dossier import extract_symbol, should_use_research_dossier
 from src.state import AgentState, PipelineStatus, SkillRequest
 
 
@@ -161,6 +162,18 @@ def stage_one_request_skills(state: AgentState) -> AgentState:
                 reason="需要读取 Cash_Anchor 本地持仓、年度投入和退休分红目标账本，进行确定性计算。",
             )
         )
+    if should_use_research_dossier(state.user_input):
+        requested_skills.append(
+            SkillRequest(
+                skill_name="research_dossier",
+                arguments={
+                    "framework_id": state.framework_id,
+                    "symbol": extract_symbol(state.user_input) or symbol,
+                    "user_query": state.user_input,
+                },
+                reason="需要读取或准备该标的的研究档案，检查历史论据、退出条件和判断是否过期。",
+            )
+        )
 
     requested_skills.extend(
         [
@@ -196,6 +209,8 @@ def stage_two_decide(state: AgentState) -> AgentState:
         system_prompt=(
             "你是私人投资管家的子 Agent。你只能依据当前策略宪法、用户原话、"
             "主管道披露的数据进行 If-Then 推演。不要编造未披露的实时数据。"
+            "涉及个股研究档案时，必须检查旧论据是否仍跟上最新事实；"
+            "资本市场里，过期的判断比没有判断更危险。"
         ),
         user_prompt=(
             f"策略框架：{state.framework_id}\n"
@@ -205,7 +220,8 @@ def stage_two_decide(state: AgentState) -> AgentState:
             f"用户原话：{state.user_input}\n\n"
             f"已披露数据来源：{data_names}\n"
             f"已披露数据：{_compact_disclosed_data_for_prompt(state)}\n\n"
-            "请输出：1. 核心判断；2. If-Then 执行纪律；3. 需要人工确认的风险点。"
+            "请输出：1. 核心判断；2. 信息与论据；3. 量化验证；"
+            "4. 风险管理；5. If-Then 执行纪律；6. 需要人工确认或更新档案的事项。"
         ),
         agent_role="worker",
         call_site="sub_agent.stage_two_decide",

@@ -213,7 +213,45 @@ python3 scripts/token_report.py --date 2026-05-17 --top 10
 - 找出 Top 昂贵调用点。
 - 后续针对性拆分宪法、压缩 prompt、分级审计。
 
-## 12. 配置与密钥
+## 12. 研究档案与判断保鲜
+
+模块：`src/research_dossier.py`
+
+每个策略岛可以维护自己的个股研究档案：
+
+```text
+frameworks/{framework_id}/research_dossiers/{SYMBOL}.json
+```
+
+真实档案默认被 Git 忽略，只提交目录 `.gitkeep` 和 schema 模板：
+
+```text
+frameworks/research_templates/dossier_schema.json
+```
+
+研究档案解决的问题不是“保存笔记”，而是让投资判断跟随事实持续更新：
+
+- 记录公司基本面、行业周期、估值、买入理由、看多逻辑。
+- 记录风险点、退出条件、执行纪律和开放问题。
+- 记录每次 Agent 与用户围绕该标的形成的判断。
+- 检查 `last_fact_update_at` 是否超过 `stale_after_days`。
+
+核心原则：
+
+```text
+资本市场里，过期的判断比没有判断更危险。
+```
+
+当用户问题涉及个股分析、财报、买入理由、退出条件、风险点、论据或研究档案时，
+子 Agent 必须申请 `research_dossier` Skill。主管道披露档案快照后，LLM 再把：
+
+```text
+信息 -> 论据 -> 量化验证 -> 风险管理 -> 执行建议 -> 复盘更新
+```
+
+连成闭环。
+
+## 13. 配置与密钥
 
 模板：`.env.example`
 
@@ -233,7 +271,7 @@ python3 scripts/token_report.py --date 2026-05-17 --top 10
 
 `config.yaml` 只记录默认值和环境变量名，不存储真实密钥。
 
-## 13. 本地验证
+## 14. 本地验证
 
 ```bash
 python3 -m compileall private_investment_butler
@@ -249,7 +287,7 @@ python3 scripts/token_report.py --date 2026-05-17
 uvicorn src.feishu_gateway:app --host 0.0.0.0 --port 8000
 ```
 
-## 14. 开发约束
+## 15. 开发约束
 
 - 不引入重型状态机框架。
 - 不跨策略岛读取宪法。
