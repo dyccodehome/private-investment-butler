@@ -1,0 +1,37 @@
+{
+  "symbol": "NVDA",
+  "framework_id": "US_Disruptive_Growth",
+  "company_name": "",
+  "created_at": "2026-05-21T20:25:12",
+  "updated_at": "2026-05-21T20:25:12",
+  "last_fact_update_at": "",
+  "stale_after_days": 30,
+  "status": "active",
+  "core_thesis": "",
+  "why_i_bought": [],
+  "bullish_case": [],
+  "bearish_case": [],
+  "fundamental_notes": [],
+  "industry_cycle": "",
+  "valuation_notes": "",
+  "quantitative_checks": [],
+  "risk_points": [],
+  "exit_conditions": [],
+  "execution_rules": [],
+  "open_questions": [],
+  "evidence_log": [],
+  "decision_log": [
+    {
+      "timestamp": "2026-05-21T20:25:12",
+      "user_query": "帮我分析 NVDA 的公司基本面、为什么看多、风险点和退出条件",
+      "context_bundle_id": "US_Disruptive_Growth",
+      "disclosed_skills": [
+        "research_dossier"
+      ],
+      "agent_proposal": null,
+      "audit_signal": null,
+      "final_reply": "测试研究档案记录",
+      "status": "completed"
+    }
+  ]
+}

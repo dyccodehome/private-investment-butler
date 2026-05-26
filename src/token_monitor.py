@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from src.app_config import get_config
+from src.cost_meter import estimate_call_cost
 from src.init import RUNTIME_DIR
 
 
@@ -18,6 +19,7 @@ TOKEN_USAGE_DIR = RUNTIME_DIR / "token_usage"
 def record_token_usage(
     *,
     model: str,
+    provider: str = "",
     agent_role: str,
     call_site: str,
     framework_id: str | None,
@@ -30,6 +32,7 @@ def record_token_usage(
     status: str,
     error: str = "",
     context_bundle_id: str | None = None,
+    trace_id: str | None = None,
 ) -> Path | None:
     """追加一条模型调用用量记录。
 
@@ -45,8 +48,17 @@ def record_token_usage(
     TOKEN_USAGE_DIR.mkdir(parents=True, exist_ok=True)
     log_path = TOKEN_USAGE_DIR / f"{now:%Y-%m-%d}.jsonl"
     usage = _extract_usage(response or {})
+    estimated_cost = estimate_call_cost(
+        provider=provider,
+        model=model,
+        input_tokens=usage["input_tokens"],
+        output_tokens=usage["output_tokens"],
+        reasoning_tokens=usage["reasoning_tokens"],
+    )
     record = {
         "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "trace_id": trace_id,
+        "provider": provider,
         "model": model,
         "agent_role": agent_role,
         "call_site": call_site,
@@ -58,6 +70,7 @@ def record_token_usage(
         "output_tokens": usage["output_tokens"],
         "reasoning_tokens": usage["reasoning_tokens"],
         "total_tokens": usage["total_tokens"],
+        "estimated_cost_usd": estimated_cost,
         "latency_ms": latency_ms,
         "status": status,
         "error": error,
@@ -110,14 +123,30 @@ def get_today_total_tokens() -> int:
 
 
 def _extract_usage(response: dict[str, Any]) -> dict[str, int]:
-    """标准化 Responses API 的 usage 字段。"""
+    """标准化不同厂商的 usage 字段。"""
 
     usage = response.get("usage") or {}
-    input_tokens = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
-    output_tokens = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+    gemini_usage = response.get("usageMetadata") or {}
+    input_tokens = int(
+        usage.get("input_tokens")
+        or usage.get("prompt_tokens")
+        or gemini_usage.get("promptTokenCount")
+        or 0
+    )
+    output_tokens = int(
+        usage.get("output_tokens")
+        or usage.get("completion_tokens")
+        or gemini_usage.get("candidatesTokenCount")
+        or 0
+    )
     output_details = usage.get("output_tokens_details") or {}
-    reasoning_tokens = int(output_details.get("reasoning_tokens") or usage.get("reasoning_tokens") or 0)
-    total_tokens = int(usage.get("total_tokens") or input_tokens + output_tokens)
+    reasoning_tokens = int(
+        output_details.get("reasoning_tokens")
+        or usage.get("reasoning_tokens")
+        or gemini_usage.get("thoughtsTokenCount")
+        or 0
+    )
+    total_tokens = int(usage.get("total_tokens") or gemini_usage.get("totalTokenCount") or input_tokens + output_tokens)
     return {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,

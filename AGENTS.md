@@ -23,21 +23,18 @@
 frameworks/
 ├── Cash_Anchor/
 │   ├── constitution.md
+│   ├── sub_frameworks/
 │   ├── logs/
 │   └── chat_history/
-├── CN_Alpha_Growth/
-│   ├── constitution.md
-│   ├── logs/
-│   └── chat_history/
-└── US_Disruptive_Growth/
+└── Growth_Engine/
     ├── constitution.md
+    ├── sub_frameworks/
     ├── logs/
     └── chat_history/
 ```
 
 - `Cash_Anchor`：现金锚点，系统防守端与血包，关注股息、现金流、期权权利金。
-- `CN_Alpha_Growth`：中国成长引擎，本土阿尔法，关注 A 股成长、产业升级、MA120 趋势纪律。
-- `US_Disruptive_Growth`：全球颠覆性成长，关注美股科技巨头、AI、生物科技、SaaS、TAM 与护城河。
+- `Growth_Engine`：成长引擎，系统进攻端，含 A 股成长与美股颠覆性成长两个子框架。
 
 ## 3. 全局状态
 
@@ -55,7 +52,7 @@ frameworks/
 - 审计日志：`audit_log`
 - 熔断信号：`audit_signal`
 - 最终回复：`final_answer`
-- 人工裁决：`user_action`
+- 人工确认：`user_action`
 
 ## 4. 管道生命周期
 
@@ -67,26 +64,21 @@ frameworks/
 2. `intake_precheck(state)`：子 Agent 接单预检，不匹配则 bounce-back。
 3. `stage_one_request_skills(state)`：子 Agent 只读宪法和用户原话，申请所需 Skill。
 4. `load_skill(...)`：主管道按需加载 Skill，写入 `disclosed_data`。
-5. `stage_two_decide(state)`：子 Agent 调用 OpenAI `gpt-5.5` 生成 If-Then 推演。
+5. `stage_two_decide(state)`：子 Agent 调用策略配置中的 DeepSeek `deepseek-v4-pro` 生成 If-Then 推演。
 6. `audit_before_output(state)`：审计官独立调用模型做反方审计。
 7. `enforce_circuit_breaker(state)`：检测 `[REJECT]`，必要时熔断。
-8. `_send_terminal_result(...)`：通过通讯网关输出最终结果或人工裁决卡片。
+8. `_send_terminal_result(...)`：通过通讯网关输出最终结果或人工确认卡片。
 9. `save_chat_session(state)`：把完整会话写入策略岛 `chat_history/`。
 
 ## 5. 通讯架构
 
-飞书入口：`src/feishu_gateway.py`
+飞书入口：`src/feishu_long_connection.py`
 
-- `/webhook/feishu`
-  - 接收飞书消息。
-  - 验证 token。
-  - 解析 `chat_id` 和文本。
-  - 秒回 `{code: 0}`。
-  - 后台运行管道。
-- `/webhook/callback`
-  - 接收交互卡片按钮回调。
-  - 处理 `force_execute` / `abandon_operation`。
-  - 记录人工裁决到 chat history。
+- 使用飞书 Python SDK 长连接接收事件，不需要公网回调地址。
+- 订阅 `im.message.receive_v1` 接收用户消息。
+- 订阅 `card.action.trigger` 接收交互卡片按钮回调。
+- 收到普通文本后交给 `src.feishu_runtime.handle_feishu_text_message(...)`。
+- 收到卡片按钮后交给 `src.feishu_runtime.handle_feishu_card_callback(...)`。
 
 统一输出口：`src/communication_gate.py`
 
@@ -122,38 +114,83 @@ communication_gate.send_card(chat_id, title, text, actions)
 
 iwencai 相关 Skill 已从 `iwencai-investment-engine` 迁入 `skills/`。
 
+## 7.1 外部命令与券商数据边界
+
+LLM 不允许自由调用 shell、拼接命令或直接访问券商 CLI/API。
+
+所有外部数据接入必须通过固定 Python 工具层实现：
+
+- 每个能力对应一个明确函数，例如 `sync_longbridge_positions()`。
+- Python 工具内部使用白名单命令数组调用外部程序，例如 `["longbridge", "positions", "--format", "json"]`。
+- 不允许把用户输入直接拼进 shell 字符串。
+- 不开放下单、改单、撤单等交易命令。
+- 对外部命令输出必须做 JSON 解析、字段校验、错误分类和超时控制。
+- 工具层只能返回结构化结果或同步提案，不能让 LLM 直接覆盖本地账本。
+
+`/sync longbridge` 的目标是触发固定只读同步流程，而不是让模型自行决定执行什么命令。
+
 ## 8. 模型配置
 
 统一配置：`config.yaml`
 
 统一读取：`src/app_config.py`
 
-OpenAI 调用：`src/llm_client.py`
+模型调用：`src/llm_client.py`
 
-- 默认模型：`gpt-5.5`
-- API：OpenAI Responses API
-- Key：从环境变量 `OPENAI_API_KEY` 读取，不写入仓库。
+- 默认 provider：`deepseek`
+- 默认模型：`deepseek-v4-pro`
+- 支持 provider：`openai`、`deepseek`、`gemini`
+- Key：从环境变量读取，不写入仓库。
 - 每个策略可单独配置：
+  - `provider`
   - `model`
   - `reasoning_effort`
   - `max_output_tokens`
+- 横向 Agent 可在 `agents:` 下单独配置模型：
+  - `auditor`
+  - `knowledge_absorber`
 
-未配置 key 时，模型调用返回 `[OPENAI_NOT_CONFIGURED]`，保证本地管道可测试。
+协议适配：
+
+- `openai`：Responses API
+- `deepseek`：OpenAI-compatible Chat Completions
+- `gemini`：Gemini `generateContent`
+
+未配置 key 时，模型调用返回 `[PROVIDER_NOT_CONFIGURED]`，保证本地管道可测试。
 
 ## 9. 审计与熔断
 
 模块：`src/auditor.py`
 
-审计官是独立 LLM 调用，不复用子 Agent 的结论。它根据场景选择人格：
+审计模块是独立 LLM 调用，不复用子 Agent 的结论。设计原则是：
 
-- 日常决策：极端风控官
-- 复盘：过拟合纠察员
-- 修改框架：逻辑洁癖者
+- 模型物理隔离：审计模块通过 `LLMClient.for_agent("auditor")` 读取 `agents.auditor` 配置，不共享子 Agent 会话和策略模型配置。
+- 审计重点动态切换：主管道把状态交给审计模块时，根据触发场景注入不同 System Prompt。
 
-如果审计输出含 `[REJECT]`，系统进入 `AUDIT_REJECTED`，并通过飞书卡片要求人工选择：
+当前内置审计重点：
 
-- 强行执行
+- `风险审计`
+  - 触发：子 Agent 给出买入、加仓、补仓、建仓、增持等提案。
+  - 重点：检查回撤、仓位、估值、财报、流动性和用户情绪。
+- `规则变更审计`
+  - 触发：`/absorb` 或任何修改、添加、重写框架宪法的动作。
+  - 重点：检查规则变更是否具备跨周期适用性，避免为了短期波动、单一个股故事或社媒情绪修改核心规则。
+- `流程审计`
+  - 触发：其他普通输出。
+  - 重点：检查事实充分性、规则一致性和风险表达。
+
+如果审计输出含 `[REJECT]`，系统进入 `AUDIT_REJECTED`，并通过飞书卡片要求人工确认：
+
+- 继续执行
 - 放弃操作
+
+全局 LLM 输出风格：
+
+- 措辞准确、简洁、中性。
+- 不使用角色扮演式、夸张、情绪化或修饰性的表达。
+- 不使用“首席”“主人”“极端”“终极”“唤醒”“对撞”“轰炸”等词。
+- 优先说明事实、判断依据、风险、待确认事项和下一步动作。
+- 面向用户的回复避免仪式感文案，直接给出结论和可执行信息。
 
 ## 10. 会话黑匣子
 
@@ -173,7 +210,7 @@ frameworks/{framework_id}/chat_history/YYYY-MM-DD.jsonl
 - 子 Agent 草案
 - 审计官意见
 - 最终回复
-- 人工裁决
+- 人工确认
 
 用途：周末复盘 Agent 可读取本周所有 jsonl，生成行为审计报告。
 
@@ -213,7 +250,64 @@ python3 scripts/token_report.py --date 2026-05-17 --top 10
 - 找出 Top 昂贵调用点。
 - 后续针对性拆分宪法、压缩 prompt、分级审计。
 
-## 12. 研究档案与判断保鲜
+## 12. 全链路追踪与成本治理
+
+模块：
+
+- `src/trace_logger.py`
+- `src/cost_meter.py`
+- `src/observability_api.py`
+
+Trace 事件流写入：
+
+```text
+runtime/traces/YYYY-MM-DD.jsonl
+```
+
+每个事件包含：
+
+- `trace_id`
+- `span_id`
+- `event_type`
+- `agent_role`
+- `framework_id`
+- `latency_ms`
+- `token_usage`
+- `risk_flags`
+- `metadata`
+
+当前打点覆盖：
+
+- 飞书消息接收与会话锁
+- Master 路由
+- 子 Agent bounce-back
+- Skill 申请与披露
+- LLM 调用完成
+- 子 Agent 草案生成
+- 审计开始与结束
+- 熔断触发
+- 人工按钮回调
+- 最终消息发送
+- 会话黑匣子保存
+
+成本治理配置在 `config.yaml::cost_management`。价格按每百万 token 配置，默认全部为 0，
+避免代码硬编码厂商价格。`token_usage` 记录会写入 `estimated_cost_usd`。
+
+本地观测页面：
+
+```text
+http://localhost:8000/observability
+```
+
+API：
+
+```text
+/api/observability/summary
+/api/traces
+/api/traces/{trace_id}
+```
+
+## 13. 研究档案与判断保鲜
 
 模块：`src/research_dossier.py`
 
@@ -251,7 +345,7 @@ frameworks/research_templates/dossier_schema.json
 
 连成闭环。
 
-## 13. 宪法再造与知识吸收
+## 14. 宪法再造与知识吸收
 
 模块：`src/knowledge_absorber.py`
 
@@ -272,7 +366,7 @@ frameworks/research_templates/dossier_schema.json
   -> 与 Constitution.md 冲突检测
   -> 反方审计
   -> Patch Proposal JSON
-  -> 人类按钮裁决
+  -> 人工按钮确认
 ```
 
 每个策略岛都有三类本地私有目录：
@@ -285,7 +379,7 @@ frameworks/{framework_id}/patch_archive/
 
 这些真实内容默认被 Git 忽略，避免把个人阅读材料、草案和决策过程公开。
 
-飞书中的 `/absorb` 必须异步处理：HTTP 入口秒回，后台生成提案，再推送审批卡片。
+飞书中的 `/absorb` 必须异步处理：长连接收到消息后立即返回 SDK 回调线程，后台生成提案，再推送审批卡片。
 
 审批按钮：
 
@@ -295,7 +389,7 @@ frameworks/{framework_id}/patch_archive/
 
 同意打补丁前必须检查目标 `constitution.md` 是否有未提交改动。若存在人工草稿，必须拒绝自动写入，避免把人工修改和自动补丁混成一次提交。
 
-## 14. 配置与密钥
+## 15. 配置与密钥
 
 模板：`.env.example`
 
@@ -304,7 +398,6 @@ frameworks/{framework_id}/patch_archive/
 - `OPENAI_API_KEY`
 - `FEISHU_APP_ID`
 - `FEISHU_APP_SECRET`
-- `FEISHU_WEBHOOK_URL`
 - `FEISHU_VERIFICATION_TOKEN`
 - `FEISHU_ENCRYPT_KEY`
 - `YUQUE_TOKEN`
@@ -315,7 +408,7 @@ frameworks/{framework_id}/patch_archive/
 
 `config.yaml` 只记录默认值和环境变量名，不存储真实密钥。
 
-## 15. 本地验证
+## 16. 本地验证
 
 ```bash
 python3 -m compileall private_investment_butler
@@ -325,13 +418,13 @@ printf 'A股半导体成长股跌破MA120要不要撤\n' | python3 main.py
 python3 scripts/token_report.py --date 2026-05-17
 ```
 
-启动飞书网关：
+启动飞书长连接：
 
 ```bash
-uvicorn src.feishu_gateway:app --host 0.0.0.0 --port 8000
+python3 -m src.feishu_long_connection
 ```
 
-## 16. 开发约束
+## 17. 开发约束
 
 - 不引入重型状态机框架。
 - 不跨策略岛读取宪法。

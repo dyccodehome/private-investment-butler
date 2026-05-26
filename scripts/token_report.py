@@ -30,6 +30,8 @@ def main() -> None:
     print(f"Token Usage Report ({args.date})")
     print("=" * 72)
     _print_totals(records)
+    _print_group(records, "provider", "By Provider")
+    _print_group(records, "model", "By Model")
     _print_group(records, "agent_role", "By Agent Role")
     _print_group(records, "framework_id", "By Framework")
     _print_group(records, "context_bundle_id", "By Context Bundle")
@@ -60,9 +62,11 @@ def _print_totals(records: list[dict[str, Any]]) -> None:
     input_tokens = sum(int(row.get("input_tokens") or 0) for row in records)
     output_tokens = sum(int(row.get("output_tokens") or 0) for row in records)
     reasoning_tokens = sum(int(row.get("reasoning_tokens") or 0) for row in records)
+    estimated_cost = sum(float(row.get("estimated_cost_usd") or 0) for row in records)
     print(f"Calls: {len(records)}")
     print(f"Total tokens: {total}")
     print(f"Input: {input_tokens} | Output: {output_tokens} | Reasoning: {reasoning_tokens}")
+    print(f"Estimated cost: ${estimated_cost:.6f}")
     print()
 
 

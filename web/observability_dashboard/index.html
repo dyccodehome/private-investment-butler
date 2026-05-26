@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Private Investment Butler Observability</title>
+    <link rel="stylesheet" href="/observability/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>全链路追踪</h1>
+        <p>Trace、Token、成本、审计与弹回监控</p>
+      </div>
+      <label>
+        日期
+        <input id="dateInput" type="date" />
+      </label>
+    </header>
+
+    <main>
+      <section class="metrics" id="metrics"></section>
+
+      <section class="layout">
+        <div class="panel">
+          <div class="panelHeader">
+            <h2>Trace 列表</h2>
+            <button id="refreshBtn">刷新</button>
+          </div>
+          <div id="traceList" class="traceList"></div>
+        </div>
+
+        <div class="panel detailPanel">
+          <h2>Trace 详情</h2>
+          <div id="traceDetail" class="timeline empty">选择一条 trace 查看时间线</div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/observability/app.js"></script>
+  </body>
+</html>

@@ -43,7 +43,7 @@ def release_processing(chat_id: str) -> None:
 
 
 def mark_event_seen(event_id: str) -> bool:
-    """对重复投递的 webhook 返回 False。"""
+    """对重复投递的飞书事件返回 False。"""
 
     if not event_id:
         return True

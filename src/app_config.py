@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -20,10 +20,37 @@ ENV_PATH = PROJECT_ROOT / ".env"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "openai": {
+        "provider": "openai",
+        "api_protocol": "responses",
         "api_key_env": "OPENAI_API_KEY",
         "base_url": "https://api.openai.com",
         "responses_path": "/v1/responses",
+        "chat_completions_path": "/v1/chat/completions",
         "default_model": "gpt-5.5",
+        "default_reasoning_effort": "medium",
+        "default_max_output_tokens": 4096,
+        "timeout_seconds": 60,
+    },
+    "deepseek": {
+        "provider": "deepseek",
+        "api_protocol": "chat_completions",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "base_url": "https://api.deepseek.com",
+        "responses_path": "/v1/responses",
+        "chat_completions_path": "/v1/chat/completions",
+        "default_model": "deepseek-v4-pro",
+        "default_reasoning_effort": "medium",
+        "default_max_output_tokens": 4096,
+        "timeout_seconds": 180,
+    },
+    "gemini": {
+        "provider": "gemini",
+        "api_protocol": "gemini_generate_content",
+        "api_key_env": "GEMINI_API_KEY",
+        "base_url": "https://generativelanguage.googleapis.com",
+        "responses_path": "/v1beta/models/{model}:generateContent",
+        "chat_completions_path": "/v1/chat/completions",
+        "default_model": "gemini-2.5-pro",
         "default_reasoning_effort": "medium",
         "default_max_output_tokens": 4096,
         "timeout_seconds": 60,
@@ -31,30 +58,40 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "router": {"max_route_retries": 3},
     "frameworks": {
         "Cash_Anchor": {
-            "model": "gpt-5.5",
+            "provider": "deepseek",
+            "model": "deepseek-v4-pro",
             "reasoning_effort": "medium",
             "max_output_tokens": 4096,
         },
-        "CN_Alpha_Growth": {
-            "model": "gpt-5.5",
-            "reasoning_effort": "medium",
-            "max_output_tokens": 4096,
-        },
-        "US_Disruptive_Growth": {
-            "model": "gpt-5.5",
+        "Growth_Engine": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-pro",
             "reasoning_effort": "high",
             "max_output_tokens": 4096,
         },
     },
-    "messaging": {
-        "provider": "feishu",
-        "app_id_env": "FEISHU_APP_ID",
-        "app_secret_env": "FEISHU_APP_SECRET",
-        "lark_host": "https://open.feishu.cn",
-        "webhook_url_env": "FEISHU_WEBHOOK_URL",
-        "verification_token_env": "FEISHU_VERIFICATION_TOKEN",
-        "encrypt_key_env": "FEISHU_ENCRYPT_KEY",
+    "agents": {
+        "auditor": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-pro",
+            "reasoning_effort": "high",
+            "max_output_tokens": 1600,
+        },
+        "knowledge_absorber": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-pro",
+            "reasoning_effort": "high",
+            "max_output_tokens": 2400,
+        },
     },
+        "messaging": {
+            "provider": "feishu",
+            "app_id_env": "FEISHU_APP_ID",
+            "app_secret_env": "FEISHU_APP_SECRET",
+            "lark_host": "https://open.feishu.cn",
+            "verification_token_env": "FEISHU_VERIFICATION_TOKEN",
+            "encrypt_key_env": "FEISHU_ENCRYPT_KEY",
+        },
     "yuque": {
         "token_env": "YUQUE_TOKEN",
         "namespace_env": "YUQUE_NAMESPACE",
@@ -70,16 +107,48 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "per_session_token_limit": 50000,
         "warning_threshold": 0.8,
     },
+    "cost_management": {
+        "currency": "USD",
+        "daily_budget_usd": 5.0,
+        "warning_threshold": 0.8,
+        "model_prices": {
+            "openai": {
+                "gpt-5.5": {
+                    "input_per_1m": 0,
+                    "output_per_1m": 0,
+                    "reasoning_per_1m": 0,
+                }
+            },
+            "deepseek": {
+                "deepseek-v4-pro": {
+                    "input_per_1m": 0,
+                    "output_per_1m": 0,
+                    "reasoning_per_1m": 0,
+                }
+            },
+            "gemini": {
+                "gemini-2.5-pro": {
+                    "input_per_1m": 0,
+                    "output_per_1m": 0,
+                    "reasoning_per_1m": 0,
+                }
+            },
+        },
+    },
 }
 
 
 @dataclass(frozen=True)
-class OpenAISettings:
-    """OpenAI Responses API 调用的运行时配置。"""
+class LLMProviderSettings:
+    """单个模型厂商的运行时配置。"""
 
-    api_key: str
+    provider: str
+    api_protocol: str
+    api_key_env: str
+    api_key: str = field(repr=False)
     base_url: str
     responses_path: str
+    chat_completions_path: str
     default_model: str
     default_reasoning_effort: str
     default_max_output_tokens: int
@@ -90,6 +159,7 @@ class OpenAISettings:
 class FrameworkLLMSettings:
     """每个策略框架独立的模型选择参数。"""
 
+    provider: str
     model: str
     reasoning_effort: str
     max_output_tokens: int
@@ -100,12 +170,11 @@ class MessagingSettings:
     """消息发送与飞书校验的运行时配置。"""
 
     provider: str
-    app_id: str
-    app_secret: str
+    app_id: str = field(repr=False)
+    app_secret: str = field(repr=False)
     lark_host: str
-    webhook_url: str
-    verification_token: str
-    encrypt_key: str
+    verification_token: str = field(repr=False)
+    encrypt_key: str = field(repr=False)
 
 
 class AppConfig:
@@ -116,25 +185,65 @@ class AppConfig:
         self.path = path
         self.raw = _deep_merge(DEFAULT_CONFIG, _load_config_file(path))
 
-    def openai(self) -> OpenAISettings:
-        section = self.raw["openai"]
-        return OpenAISettings(
-            api_key=os.getenv(section["api_key_env"], ""),
+    def llm_provider(self, provider: str | None) -> LLMProviderSettings:
+        """读取指定模型厂商配置。
+
+        当前支持 openai、deepseek、gemini。新增厂商时只需要在 DEFAULT_CONFIG/config.yaml
+        增加同名段，并在 ``src.llm_client`` 中补一个协议适配器。
+        """
+
+        provider_name = provider or "openai"
+        section = self.raw.get(provider_name)
+        if not isinstance(section, dict):
+            raise ValueError(f"未知 LLM provider: {provider_name}")
+        return LLMProviderSettings(
+            provider=str(section.get("provider") or provider_name),
+            api_protocol=str(section.get("api_protocol") or "responses"),
+            api_key_env=str(section["api_key_env"]),
+            api_key=os.getenv(str(section["api_key_env"]), ""),
             base_url=str(section["base_url"]).rstrip("/"),
-            responses_path=str(section["responses_path"]),
+            responses_path=str(section.get("responses_path") or "/v1/responses"),
+            chat_completions_path=str(section.get("chat_completions_path") or "/v1/chat/completions"),
             default_model=str(section["default_model"]),
             default_reasoning_effort=str(section["default_reasoning_effort"]),
             default_max_output_tokens=int(section["default_max_output_tokens"]),
             timeout_seconds=int(section["timeout_seconds"]),
         )
 
+    def openai(self) -> LLMProviderSettings:
+        """兼容旧代码：返回 OpenAI provider 配置。"""
+
+        return self.llm_provider("openai")
+
     def framework_llm(self, framework_id: str | None) -> FrameworkLLMSettings:
-        openai = self.openai()
+        default_provider = self.llm_provider("deepseek")
         section = self.raw.get("frameworks", {}).get(framework_id or "", {})
+        provider = str(section.get("provider") or default_provider.provider)
+        provider_settings = self.llm_provider(provider)
         return FrameworkLLMSettings(
-            model=str(section.get("model") or openai.default_model),
-            reasoning_effort=str(section.get("reasoning_effort") or openai.default_reasoning_effort),
-            max_output_tokens=int(section.get("max_output_tokens") or openai.default_max_output_tokens),
+            provider=provider,
+            model=str(section.get("model") or provider_settings.default_model),
+            reasoning_effort=str(
+                section.get("reasoning_effort") or provider_settings.default_reasoning_effort
+            ),
+            max_output_tokens=int(section.get("max_output_tokens") or provider_settings.default_max_output_tokens),
+        )
+
+    def agent_llm(self, agent_role: str, framework_id: str | None = None) -> FrameworkLLMSettings:
+        """读取 Agent 角色级模型配置；没有角色配置时回退到策略框架配置。"""
+
+        section = self.raw.get("agents", {}).get(agent_role, {})
+        if not section:
+            return self.framework_llm(framework_id)
+        provider = str(section.get("provider") or "deepseek")
+        provider_settings = self.llm_provider(provider)
+        return FrameworkLLMSettings(
+            provider=provider,
+            model=str(section.get("model") or provider_settings.default_model),
+            reasoning_effort=str(
+                section.get("reasoning_effort") or provider_settings.default_reasoning_effort
+            ),
+            max_output_tokens=int(section.get("max_output_tokens") or provider_settings.default_max_output_tokens),
         )
 
     def messaging(self) -> MessagingSettings:
@@ -144,7 +253,6 @@ class AppConfig:
             app_id=os.getenv(str(section.get("app_id_env", "FEISHU_APP_ID")), ""),
             app_secret=os.getenv(str(section.get("app_secret_env", "FEISHU_APP_SECRET")), ""),
             lark_host=str(section.get("lark_host", "https://open.feishu.cn")).rstrip("/"),
-            webhook_url=os.getenv(str(section["webhook_url_env"]), ""),
             verification_token=os.getenv(str(section["verification_token_env"]), ""),
             encrypt_key=os.getenv(str(section["encrypt_key_env"]), ""),
         )
@@ -153,6 +261,11 @@ class AppConfig:
         """以普通字典形式返回 Token 监控配置。"""
 
         return dict(self.raw.get("token_monitor", {}))
+
+    def cost_management(self) -> dict[str, Any]:
+        """以普通字典形式返回成本管理配置。"""
+
+        return dict(self.raw.get("cost_management", {}))
 
 
 def get_config() -> AppConfig:

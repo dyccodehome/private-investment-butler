@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Literal
+from uuid import uuid4
 
 
 class PipelineStatus(str, Enum):
@@ -55,6 +56,7 @@ class AgentState:
 
     user_input: str
     chat_id: str | None = None
+    trace_id: str = field(default_factory=lambda: f"trace_{uuid4().hex[:12]}")
     framework_id: str | None = None
     context_bundle_id: str | None = None
     loaded_context_files: list[str] = field(default_factory=list)

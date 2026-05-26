@@ -16,6 +16,7 @@ class ErrorKind(str, Enum):
     BILLING = "billing"
     RATE_LIMIT = "rate_limit"
     AUTH = "auth"
+    TIMEOUT = "timeout"
     NETWORK = "network"
     CONTEXT_OVERFLOW = "context_overflow"
     MODEL_NOT_FOUND = "model_not_found"
@@ -59,10 +60,15 @@ _AUTH_PATTERNS = [
 
 _NETWORK_PATTERNS = [
     "urlopen error",
-    "timed out",
     "temporary failure",
     "certificate_verify_failed",
     "nodename nor servname",
+]
+
+_TIMEOUT_PATTERNS = [
+    "timed out",
+    "timeout",
+    "read operation timed out",
 ]
 
 _CONTEXT_PATTERNS = [
@@ -90,7 +96,7 @@ def classify_error(exc: BaseException) -> ClassifiedError:
         return ClassifiedError(
             kind=ErrorKind.BILLING,
             retryable=False,
-            user_message="模型调用被账单或额度拦截。请检查 OpenAI Billing、Credits 或 Usage Limit 后重试。",
+            user_message="模型调用被账单或额度拦截。请检查当前模型厂商的 Billing、Credits 或 Usage Limit 后重试。",
             raw_message=raw,
         )
     if _contains_any(text, _RATE_LIMIT_PATTERNS):
@@ -105,6 +111,13 @@ def classify_error(exc: BaseException) -> ClassifiedError:
             kind=ErrorKind.AUTH,
             retryable=False,
             user_message="模型鉴权失败。请检查本地 .env 中的 API Key 是否正确、是否有权限调用当前模型。",
+            raw_message=raw,
+        )
+    if _contains_any(text, _TIMEOUT_PATTERNS):
+        return ClassifiedError(
+            kind=ErrorKind.TIMEOUT,
+            retryable=True,
+            user_message="模型响应超时。当前模型可能推理较慢，建议提高 timeout、降低 max_output_tokens 或把审计 prompt 压缩后重试。",
             raw_message=raw,
         )
     if _contains_any(text, _NETWORK_PATTERNS):

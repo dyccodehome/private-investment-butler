@@ -45,7 +45,7 @@ def save_user_action(
     final_reply_to_user: str,
     reason: str = "",
 ) -> Path:
-    """将一次人工介入回调裁决追加到会话历史。"""
+    """将一次人工介入回调追加到会话历史。"""
 
     state = AgentState(
         user_input="[interactive_callback]",
@@ -69,6 +69,7 @@ def _build_record(state: AgentState, timestamp: datetime) -> dict[str, Any]:
 
     return {
         "timestamp": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+        "trace_id": state.trace_id,
         "chat_id": state.chat_id,
         "framework_id": state.framework_id,
         "context_bundle_id": state.context_bundle_id,

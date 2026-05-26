@@ -7,8 +7,7 @@ from src.state import AgentState
 
 FRAMEWORK_IDS = {
     "Cash_Anchor": "现金流防守、股息、分红、期权权利金、稳定流动性",
-    "CN_Alpha_Growth": "A 股成长、科技自立、出海龙头、产业升级、MA120 趋势纪律",
-    "US_Disruptive_Growth": "美股成长、AI、生物科技、SaaS、全球科技巨头、颠覆性创新",
+    "Growth_Engine": "A 股成长、美股成长、科技自立、AI、生物科技、SaaS、产业升级、全球科技巨头",
 }
 
 
@@ -29,10 +28,10 @@ def route_intent(state: AgentState) -> AgentState:
         state.framework_id = "Cash_Anchor"
         state.route_reason = "识别到现金流防守、股息或期权权利金语义。"
     elif any(token in text for token in ["a股", "中国", "科技自立", "出海", "半导体", "新能源", "ma120", "本土", "产业升级"]):
-        state.framework_id = "CN_Alpha_Growth"
+        state.framework_id = "Growth_Engine"
         state.route_reason = "识别到中国成长股、本土阿尔法或 A 股趋势纪律语义。"
     elif any(token in text for token in ["美股", "us", "ai", "saas", "生物科技", "英伟达", "微软", "全球", "颠覆", "disruptive", "tam"]):
-        state.framework_id = "US_Disruptive_Growth"
+        state.framework_id = "Growth_Engine"
         state.route_reason = "识别到美股成长、全球创新或颠覆性成长语义。"
     else:
         state.framework_id = "Cash_Anchor"
