@@ -633,14 +633,10 @@ def _write_holdings(holdings: list[Holding]) -> None:
         writer.writeheader()
         for item in holdings:
             row = asdict(item)
-            for key in [
-                "shares",
-                "cost_price",
-                "current_price",
-                "annual_dividend_per_share",
-                "tax_rate",
-            ]:
-                row[key] = _format_amount(float(row[key]))
+            row["shares"] = _format_decimal(float(row["shares"]), 6)
+            for key in ["cost_price", "current_price", "annual_dividend_per_share"]:
+                row[key] = _format_decimal(float(row[key]), 4)
+            row["tax_rate"] = _format_decimal(float(row["tax_rate"]), 6)
             writer.writerow(row)
 
 
@@ -816,8 +812,9 @@ def _append_portfolio_event(event: PortfolioEvent) -> None:
         if not file_exists or PORTFOLIO_EVENTS_PATH.stat().st_size == 0:
             writer.writeheader()
         row = asdict(event)
-        for key in ["shares", "price", "amount"]:
-            row[key] = _format_amount(float(row[key]))
+        row["shares"] = _format_decimal(float(row["shares"]), 6)
+        row["price"] = _format_decimal(float(row["price"]), 4)
+        row["amount"] = _format_amount(float(row["amount"]))
         writer.writerow(row)
 
 
@@ -872,6 +869,10 @@ def _parse_year(value: str) -> int | None:
 
 def _format_amount(value: float) -> str:
     return f"{value:.2f}".rstrip("0").rstrip(".")
+
+
+def _format_decimal(value: float, places: int) -> str:
+    return f"{value:.{places}f}".rstrip("0").rstrip(".")
 
 
 def _money(value: Any, currency: str) -> str:

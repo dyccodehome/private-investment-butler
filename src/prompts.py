@@ -141,3 +141,43 @@ def knowledge_absorber_user_prompt(
         "}\n"
         "如果新知识证据不足或过度情绪化，conflict_type 必须为 reject，patch_markdown 留空。"
     )
+
+
+def absorb_discussion_system_prompt() -> str:
+    return (
+        "你负责和用户讨论一个待定的投资框架补丁。"
+        "你的目标不是迎合用户，而是通过追问和修订，把碎片知识变成明确可执行的规则，"
+        "或者明确拒绝进入宪法。"
+        "你必须基于目标宪法、初版提案、审计意见和完整讨论日志作答。"
+        "不要引入未披露事实。不要把短期情绪、个股故事或一次性经验写成长期规则。"
+        "如果信息还不够，只问一个最关键的问题。"
+        "如果已经足够，给出建议加入或建议拒绝，但最终仍需要用户确认。"
+        "只返回 JSON，不要返回 Markdown 包裹。"
+        f"{RESPONSE_STYLE_SYSTEM_PROMPT}"
+    )
+
+
+def absorb_discussion_user_prompt(
+    *,
+    patch_json: str,
+    constitution: str,
+    discussion_log: str,
+    latest_user_message: str,
+) -> str:
+    return (
+        f"当前 patch proposal JSON：\n{patch_json}\n\n"
+        f"目标宪法全文：\n{constitution}\n\n"
+        f"完整讨论日志：\n{discussion_log}\n\n"
+        f"用户最新回复：\n{latest_user_message}\n\n"
+        "请返回严格 JSON，字段如下：\n"
+        "{\n"
+        '  "status": "need_more_discussion|ready_to_accept|recommend_reject",\n'
+        '  "reply_to_user": "给用户的下一轮回复，必须简洁、直接",\n'
+        '  "updated_patch_markdown": "如果需要修订候选补丁，写完整候选 Markdown；否则沿用原补丁",\n'
+        '  "updated_target_section": "如果目标替换片段需要变化，写完整旧片段；否则沿用原 target_section",\n'
+        '  "decision_reason": "为什么继续讨论、建议加入或建议拒绝",\n'
+        '  "next_question": "如果还需要讨论，只问一个问题；否则留空"\n'
+        "}\n"
+        "如果 status 是 ready_to_accept，reply_to_user 必须明确说明用户仍需回复“同意”才会写入。"
+        "如果 status 是 recommend_reject，reply_to_user 必须明确说明用户仍需回复“拒绝”才会归档拒绝。"
+    )

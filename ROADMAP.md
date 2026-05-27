@@ -21,8 +21,11 @@
 - [x] 新增 `/sync longbridge` 占位命令，后续接入长桥只读持仓同步。
 - [x] 新增固定 Longbridge 只读工具层，`/sync longbridge` 只允许调用白名单命令 `longbridge positions --format json`。
 - [x] Longbridge 同步按策略过滤：Cash Anchor 只接收 QQQI、XQQI、TQQQ，其他美股持仓过滤。
+- [x] Longbridge 同步增加 `quote` 只读行情，写入时用 quote 刷新当前价，不再用成本价代替当前价。
 - [x] 新增 `/apply longbridge cash_anchor`，确认后把长桥 Cash Anchor 子集写入本地账本。
 - [x] 细化 `/absorb` 目标，支持 Cash Anchor 总框架、A 股红利子框架、美股美元收益子框架分别吸收知识。
+- [x] 移除知识吸收“观察池”动作，改为“继续讨论 / 同意 / 拒绝”的人工复核流程。
+- [x] 知识吸收讨论中每轮调用 LLM，使用原始提案、目标宪法、审计意见、完整讨论日志和最新用户回复。
 - [x] 扩展 `/help`，补充账本命令、长桥同步命令和知识吸收 target_id 说明。
 - [x] 将 LLM prompt 抽到 `src/prompts.py` 统一管理。
 - [x] 新增基础路由测试 `tests/test_router.py`。
@@ -32,6 +35,7 @@
 - [x] 验证 `python3 -m unittest discover -v` 通过 26 个测试。
 - [x] 跑通 CLI 命令入口 smoke test：`printf "/help\n" | python3 main.py`。
 - [x] 新增飞书长连接入口 `python3 -m src.feishu_long_connection`。
+- [x] 新增飞书长连接重启脚本 `scripts/restart_feishu.sh`。
 - [x] 抽出 `src/feishu_runtime.py`，让长连接统一处理消息和卡片回调逻辑。
 - [x] 移除 HTTP webhook 入口，不再需要公网回调地址。
 - [x] 在允许联网后成功跑通 `/absorb` 提案生成。

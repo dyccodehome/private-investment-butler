@@ -52,7 +52,7 @@ class LongbridgeProviderTest(unittest.TestCase):
         self.assertEqual(proposal["excluded"][0]["symbol"], "NVDA.US")
 
     def test_sync_uses_fixed_readonly_command(self) -> None:
-        completed = type(
+        positions_completed = type(
             "Completed",
             (),
             {
@@ -73,15 +73,65 @@ class LongbridgeProviderTest(unittest.TestCase):
                 "stderr": "",
             },
         )()
-        with patch("src.longbridge_provider.subprocess.run", return_value=completed) as run:
+        quote_completed = type(
+            "Completed",
+            (),
+            {
+                "returncode": 0,
+                "stdout": json.dumps(
+                    [
+                        {
+                            "symbol": "XQQI.US",
+                            "last": "53.560",
+                            "pre_market_quote": {
+                                "last": "53.795",
+                                "timestamp": "2026-05-27T13:27:30Z",
+                            },
+                        }
+                    ]
+                ),
+                "stderr": "",
+            },
+        )()
+        with patch(
+            "src.longbridge_provider.subprocess.run",
+            side_effect=[positions_completed, quote_completed],
+        ) as run:
             proposal = longbridge_provider.sync_longbridge_positions(timeout_seconds=3)
 
-        run.assert_called_once()
-        args, kwargs = run.call_args
-        self.assertEqual(args[0], ["longbridge", "positions", "--format", "json"])
-        self.assertFalse(kwargs.get("shell", False))
-        self.assertEqual(kwargs["timeout"], 3)
+        self.assertEqual(run.call_count, 2)
+        positions_args, positions_kwargs = run.call_args_list[0]
+        quote_args, quote_kwargs = run.call_args_list[1]
+        self.assertEqual(positions_args[0], ["longbridge", "positions", "--format", "json"])
+        self.assertEqual(quote_args[0], ["longbridge", "quote", "XQQI.US", "--format", "json"])
+        self.assertFalse(positions_kwargs.get("shell", False))
+        self.assertFalse(quote_kwargs.get("shell", False))
+        self.assertEqual(positions_kwargs["timeout"], 3)
+        self.assertEqual(quote_kwargs["timeout"], 3)
         self.assertEqual(proposal["included"][0]["symbol"], "XQQI.US")
+        self.assertEqual(proposal["included"][0]["current_price"], 53.795)
+
+    def test_parse_quote_prefers_latest_extended_hours_price(self) -> None:
+        payload = [
+            {
+                "symbol": "QQQI.US",
+                "last": "56.850",
+                "post_market_quote": {
+                    "last": "56.840",
+                    "timestamp": "2026-05-26T23:58:32Z",
+                },
+                "pre_market_quote": {
+                    "last": "56.990",
+                    "timestamp": "2026-05-27T13:28:20Z",
+                },
+            }
+        ]
+
+        quotes = longbridge_provider.parse_longbridge_quotes(payload)
+
+        self.assertEqual(quotes[0].symbol, "QQQI.US")
+        self.assertEqual(quotes[0].current_price, 56.99)
+        self.assertEqual(quotes[0].quote_source, "pre_market_quote")
 
     def test_apply_cash_anchor_sync_preserves_existing_dividend_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -132,6 +182,40 @@ class LongbridgeProviderTest(unittest.TestCase):
                 self.assertEqual(holdings[0].tax_rate, 0.3)
                 events = portfolio_ledger.read_portfolio_events()
                 self.assertEqual(events[-1].event_type, "sync_snapshot")
+
+    def test_apply_cash_anchor_sync_preserves_longbridge_cost_precision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _ledger_paths(Path(tmp))
+            with patch.multiple(
+                portfolio_ledger,
+                DATA_DIR=paths["data"],
+                TEMPLATE_DIR=paths["templates"],
+                HOLDINGS_PATH=paths["holdings"],
+                CAPITAL_FLOWS_PATH=paths["capital_flows"],
+                PORTFOLIO_EVENTS_PATH=paths["portfolio_events"],
+                DIVIDEND_PLAN_PATH=paths["dividend_plan"],
+            ):
+                with patch("src.longbridge_provider.sync_longbridge_positions") as sync:
+                    sync.return_value = {
+                        "included": [
+                            {
+                                "symbol": "XQQI.US",
+                                "name": "XQQI",
+                                "market": "US",
+                                "currency": "USD",
+                                "quantity": 80,
+                                "cost_price": 43.404,
+                            }
+                        ],
+                        "excluded": [],
+                        "summary": {"total_positions": 1, "cash_anchor_positions": 1, "excluded_positions": 0},
+                    }
+                    longbridge_provider.apply_longbridge_cash_anchor_sync()
+
+                content = paths["holdings"].read_text(encoding="utf-8")
+                self.assertIn("43.404", content)
+                events = paths["portfolio_events"].read_text(encoding="utf-8")
+                self.assertIn("43.404", events)
 
 
 def _ledger_paths(root: Path) -> dict[str, Path]:

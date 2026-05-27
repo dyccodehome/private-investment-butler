@@ -181,7 +181,8 @@ def _handle_status(args: str, chat_id: str) -> str:
         f"- 当前 chat_id：{chat_id}\n"
         f"- 正在处理的会话数：{status['processing_chats']}\n"
         f"- 已记录事件数：{status['seen_events']}\n"
-        f"- 待人工确认数：{status['pending_actions']}"
+        f"- 待人工确认数：{status['pending_actions']}\n"
+        f"- 进行中的补丁讨论数：{status['active_patch_discussions']}"
     )
 
 

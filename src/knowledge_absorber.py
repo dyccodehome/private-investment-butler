@@ -60,7 +60,7 @@ class PatchProposal:
     target_id: str = ""
     target_file: str = ""
     target_name: str = ""
-    status: Literal["proposed", "failed", "accepted", "observing", "rejected"] = "proposed"
+    status: Literal["proposed", "failed", "accepted", "discussing", "rejected"] = "proposed"
     source_summary: str = ""
     extracted_principles: list[str] = field(default_factory=list)
     applicability: dict[str, Any] = field(default_factory=dict)
@@ -71,6 +71,7 @@ class PatchProposal:
     auditor_opinion: str = ""
     risk_level: Literal["low", "medium", "high"] = "medium"
     human_decision: str | None = None
+    discussion_log: list[dict[str, str]] = field(default_factory=list)
     source_excerpt: str = ""
     error: str = ""
     created_at: str = ""
@@ -214,8 +215,8 @@ def accept_patch_proposal(framework_id: str, patch_id: str) -> Path:
     return archive_path
 
 
-def mark_patch_proposal(framework_id: str, patch_id: str, status: Literal["observing", "rejected"]) -> Path:
-    """把 proposal 标记为观察或拒绝，并移动到归档区。"""
+def mark_patch_proposal(framework_id: str, patch_id: str, status: Literal["rejected"]) -> Path:
+    """把 proposal 标记为拒绝，并移动到归档区。"""
 
     proposal = load_patch_proposal(framework_id, patch_id)
     proposal.status = status
@@ -223,6 +224,42 @@ def mark_patch_proposal(framework_id: str, patch_id: str, status: Literal["obser
     proposal.updated_at = _now()
     save_patch_proposal(proposal)
     return archive_patch_proposal(proposal)
+
+
+def start_patch_discussion(framework_id: str, patch_id: str) -> PatchProposal:
+    """把 proposal 标记为讨论中，但不归档。"""
+
+    proposal = load_patch_proposal(framework_id, patch_id)
+    proposal.status = "discussing"
+    proposal.human_decision = "discussing"
+    proposal.updated_at = _now()
+    proposal.discussion_log.append(
+        {
+            "role": "system",
+            "content": "用户选择继续讨论该宪法补丁，暂不加入，也不拒绝。",
+            "created_at": proposal.updated_at,
+        }
+    )
+    save_patch_proposal(proposal)
+    return proposal
+
+
+def append_patch_discussion(framework_id: str, patch_id: str, role: str, content: str) -> PatchProposal:
+    """追加一次补丁讨论记录。"""
+
+    proposal = load_patch_proposal(framework_id, patch_id)
+    proposal.status = "discussing"
+    proposal.human_decision = "discussing"
+    proposal.updated_at = _now()
+    proposal.discussion_log.append(
+        {
+            "role": role,
+            "content": content,
+            "created_at": proposal.updated_at,
+        }
+    )
+    save_patch_proposal(proposal)
+    return proposal
 
 
 def archive_patch_proposal(proposal: PatchProposal) -> Path:

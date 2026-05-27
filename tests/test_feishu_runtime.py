@@ -40,13 +40,79 @@ class FeishuRuntimeTest(unittest.TestCase):
             framework_id="Cash_Anchor",
             reason="PATCH-1",
         )
-        with patch("src.feishu_runtime._handle_patch_callback") as callback:
+        with patch("src.feishu_runtime._submit_or_run") as submit:
             result = feishu_runtime.handle_feishu_card_callback(
                 {"chat_id": "cli", "action": "reject_constitution_patch", "state_id": "action-1"}
             )
 
-        self.assertEqual(result, "callback handled")
-        callback.assert_called_once_with("reject_constitution_patch", "cli", "Cash_Anchor", "PATCH-1")
+        self.assertEqual(result, "callback received")
+        submit.assert_called_once()
+        self.assertEqual(submit.call_args.args[1], True)
+        self.assertEqual(submit.call_args.args[2], "reject_constitution_patch")
+
+    def test_card_callback_background_handles_reject_patch_action(self) -> None:
+        save_pending_action(
+            chat_id="cli",
+            action_id="action-2",
+            framework_id="Cash_Anchor",
+            reason="PATCH-2",
+        )
+        with patch("src.feishu_runtime._handle_patch_callback") as callback:
+            feishu_runtime.handle_feishu_card_callback(
+                {"chat_id": "cli", "action": "reject_constitution_patch", "state_id": "action-2"},
+                async_run=False,
+            )
+
+        callback.assert_called_once_with("reject_constitution_patch", "cli", "Cash_Anchor", "PATCH-2")
+
+    def test_card_callback_background_handles_discuss_patch_action(self) -> None:
+        save_pending_action(
+            chat_id="cli",
+            action_id="action-3",
+            framework_id="Cash_Anchor",
+            reason="PATCH-3",
+        )
+        with patch("src.feishu_runtime._handle_patch_callback") as callback:
+            feishu_runtime.handle_feishu_card_callback(
+                {"chat_id": "cli", "action": "discuss_constitution_patch", "state_id": "action-3"},
+                async_run=False,
+            )
+
+        callback.assert_called_once_with("discuss_constitution_patch", "cli", "Cash_Anchor", "PATCH-3")
+
+    def test_patch_discussion_text_records_message(self) -> None:
+        with patch("src.feishu_runtime.safe_run_absorb_discussion_turn") as discuss:
+            discuss.return_value.status = "need_more_discussion"
+            discuss.return_value.reply_to_user = "需要确认：这是买入前规则还是复盘规则？"
+            reply = feishu_runtime._handle_patch_discussion_text(
+                "cli",
+                "Cash_Anchor",
+                "PATCH-4",
+                "我认为适用边界需要收窄",
+            )
+
+        self.assertIn("买入前规则", reply)
+        discuss.assert_called_once_with(
+            framework_id="Cash_Anchor",
+            patch_id="PATCH-4",
+            user_message="我认为适用边界需要收窄",
+            chat_id="cli",
+        )
+
+    def test_patch_discussion_can_be_cancelled_without_llm(self) -> None:
+        with patch("src.feishu_runtime.safe_run_absorb_discussion_turn") as discuss, patch(
+            "src.feishu_runtime.clear_patch_discussion"
+        ) as clear:
+            reply = feishu_runtime._handle_patch_discussion_text(
+                "cli",
+                "Cash_Anchor",
+                "PATCH-5",
+                "取消讨论",
+            )
+
+        self.assertIn("已取消补丁讨论", reply)
+        clear.assert_called_once_with("cli")
+        discuss.assert_not_called()
 
 
 if __name__ == "__main__":

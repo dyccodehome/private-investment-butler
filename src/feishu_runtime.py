@@ -11,21 +11,27 @@ from typing import Any
 from uuid import uuid4
 
 from main import run_pipeline
+from src.absorb_discussion import safe_run_absorb_discussion_turn
 from src import communication_gate
 from src.command_registry import handle_command, help_text
 from src.context_logger import save_user_action
 from src.knowledge_absorber import (
+    append_patch_discussion,
     accept_patch_proposal,
     format_patch_proposal_for_user,
     mark_patch_proposal,
     parse_absorb_args,
     run_knowledge_absorption,
+    start_patch_discussion,
 )
 from src.session_lock import (
     acquire_processing,
+    clear_patch_discussion,
+    get_patch_discussion,
     pop_pending_action,
     release_processing,
     save_pending_action,
+    save_patch_discussion,
 )
 from src.trace_logger import trace_event
 
@@ -52,6 +58,12 @@ def handle_feishu_text_message(chat_id: str, text: str, *, async_run: bool = Tru
         )
         _submit_or_run(_run_absorb_background, async_run, chat_id, framework_id, source_text)
         return "absorb received"
+
+    discussion = get_patch_discussion(chat_id)
+    if discussion and not text.startswith("/"):
+        result = _handle_patch_discussion_text(chat_id, discussion.framework_id, discussion.reason, text)
+        communication_gate.send(chat_id, result)
+        return "patch discussion handled"
 
     command_reply = handle_command(text, chat_id)
     if command_reply is not None:
@@ -87,7 +99,7 @@ def handle_feishu_text_message(chat_id: str, text: str, *, async_run: bool = Tru
     return "received"
 
 
-def handle_feishu_card_callback(value: dict[str, Any]) -> str:
+def handle_feishu_card_callback(value: dict[str, Any], *, async_run: bool = True) -> str:
     """处理飞书卡片按钮回调。"""
 
     chat_id = str(value.get("chat_id") or "")
@@ -100,7 +112,14 @@ def handle_feishu_card_callback(value: dict[str, Any]) -> str:
             communication_gate.send(chat_id, "该确认请求已过期或已处理。")
         return "no pending action"
 
-    if action in {"accept_constitution_patch", "observe_constitution_patch", "reject_constitution_patch"}:
+    _submit_or_run(_process_card_callback_background, async_run, action, pending, state_id)
+    return "callback received"
+
+
+def _process_card_callback_background(action: str, pending: Any, state_id: str) -> None:
+    """后台处理卡片动作，避免飞书卡片回调等待耗时文件操作。"""
+
+    if action in {"accept_constitution_patch", "discuss_constitution_patch", "reject_constitution_patch"}:
         trace_event(
             trace_id=pending.reason,
             event_type="human_callback_received",
@@ -152,7 +171,6 @@ def handle_feishu_card_callback(value: dict[str, Any]) -> str:
         )
     else:
         communication_gate.send(pending.chat_id, f"未知确认动作：{action}")
-    return "callback handled"
 
 
 def _normalize_feishu_text(text: str) -> str:
@@ -204,7 +222,7 @@ def _run_absorb_background(chat_id: str, framework_id: str, source_text: str) ->
         text,
         [
             {"label": "同意并打入宪法", "action": "accept_constitution_patch", "type": "primary", "state_id": action_id},
-            {"label": "进入观察池", "action": "observe_constitution_patch", "type": "default", "state_id": action_id},
+            {"label": "继续讨论", "action": "discuss_constitution_patch", "type": "default", "state_id": action_id},
             {"label": "拒绝修改", "action": "reject_constitution_patch", "type": "danger", "state_id": action_id},
         ],
     )
@@ -219,12 +237,74 @@ def _handle_patch_callback(action: str, chat_id: str, framework_id: str | None, 
     try:
         if action == "accept_constitution_patch":
             archive_path = accept_patch_proposal(framework_id, patch_id)
+            clear_patch_discussion(chat_id)
             communication_gate.send(chat_id, f"已打入宪法并完成本地 Git commit：{patch_id}\n归档：{archive_path}")
-        elif action == "observe_constitution_patch":
-            archive_path = mark_patch_proposal(framework_id, patch_id, "observing")
-            communication_gate.send(chat_id, f"已放入观察池：{patch_id}\n归档：{archive_path}")
+        elif action == "discuss_constitution_patch":
+            proposal = start_patch_discussion(framework_id, patch_id)
+            save_patch_discussion(chat_id, patch_id, framework_id)
+            communication_gate.send(
+                chat_id,
+                f"已进入补丁讨论：{patch_id}\n"
+                f"目标：{proposal.target_id}\n\n"
+                "你可以直接补充你的判断、疑问或修改要求。"
+                "讨论结束时，回复“同意”或“拒绝”，系统只会产生这两个最终结论。",
+            )
         elif action == "reject_constitution_patch":
             archive_path = mark_patch_proposal(framework_id, patch_id, "rejected")
+            clear_patch_discussion(chat_id)
             communication_gate.send(chat_id, f"已拒绝该宪法补丁：{patch_id}\n归档：{archive_path}")
     except Exception as exc:
         communication_gate.send(chat_id, f"补丁审批执行失败：{exc}")
+
+
+def _handle_patch_discussion_text(chat_id: str, framework_id: str | None, patch_id: str, text: str) -> str:
+    """处理补丁讨论中的普通文本。"""
+
+    if not framework_id:
+        clear_patch_discussion(chat_id)
+        return "补丁讨论已结束：缺少 framework_id，请重新发起 /absorb。"
+
+    normalized = text.strip()
+    if _is_cancel_discussion(normalized):
+        clear_patch_discussion(chat_id)
+        return f"已取消补丁讨论：{patch_id}。该提案仍保留在待审批目录，后续可重新发起讨论或手动处理。"
+
+    if _is_accept_decision(normalized):
+        append_patch_discussion(framework_id, patch_id, "user", normalized)
+        try:
+            archive_path = accept_patch_proposal(framework_id, patch_id)
+            clear_patch_discussion(chat_id)
+        except Exception as exc:
+            return f"打入宪法失败：{exc}\n讨论仍保留，你可以继续补充，或回复“拒绝”结束。"
+        return f"已按讨论结论打入宪法：{patch_id}\n归档：{archive_path}"
+
+    if _is_reject_decision(normalized):
+        append_patch_discussion(framework_id, patch_id, "user", normalized)
+        archive_path = mark_patch_proposal(framework_id, patch_id, "rejected")
+        clear_patch_discussion(chat_id)
+        return f"已按讨论结论拒绝该补丁：{patch_id}\n归档：{archive_path}"
+
+    result = safe_run_absorb_discussion_turn(
+        framework_id=framework_id,
+        patch_id=patch_id,
+        user_message=normalized,
+        chat_id=chat_id,
+    )
+    suffix = ""
+    if result.status == "ready_to_accept":
+        suffix = "\n\n如果你同意这个结论，回复“同意”；如果不同意，继续说明你的修改意见。"
+    elif result.status == "recommend_reject":
+        suffix = "\n\n如果你同意拒绝，回复“拒绝”；如果不同意，继续说明你的理由。"
+    return result.reply_to_user + suffix
+
+
+def _is_accept_decision(text: str) -> bool:
+    return text in {"同意", "接受", "加入", "同意加入", "打入", "打入宪法", "确认加入", "可以加入"}
+
+
+def _is_reject_decision(text: str) -> bool:
+    return text in {"拒绝", "拒绝加入", "不加入", "不要加入", "放弃", "否决", "不同意"}
+
+
+def _is_cancel_discussion(text: str) -> bool:
+    return text in {"取消", "取消讨论", "退出讨论", "先不讨论"}

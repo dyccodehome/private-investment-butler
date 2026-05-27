@@ -90,6 +90,16 @@ def _build_interactive_card(chat_id: str, title: str, text: str, actions: list[d
                             "action": action["action"],
                             "state_id": action.get("state_id", ""),
                         },
+                        "behaviors": [
+                            {
+                                "type": "callback",
+                                "value": {
+                                    "chat_id": chat_id,
+                                    "action": action["action"],
+                                    "state_id": action.get("state_id", ""),
+                                },
+                            }
+                        ],
                     }
                     for action in actions
                 ],
@@ -114,6 +124,11 @@ def _post_feishu_openapi_message(
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
             },
+        )
+        print(
+            "Feishu message sent: "
+            f"receive_id_type={receive_id_type} receive_id={payload.get('receive_id')}",
+            flush=True,
         )
     except Exception as exc:
         # 通讯失败不能拖垮投资管道。

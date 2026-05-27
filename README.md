@@ -94,7 +94,7 @@ printf 'A股半导体成长股跌破MA120要不要撤\n' | python3 main.py
 Run Feishu long connection mode:
 
 ```bash
-python3 -m src.feishu_long_connection
+./scripts/restart_feishu.sh
 ```
 
 Long connection mode is the preferred local-first mode. It does not require a public callback URL; the app uses `FEISHU_APP_ID` and `FEISHU_APP_SECRET` to receive subscribed Feishu events and card callbacks through the Feishu SDK WebSocket connection.
@@ -220,10 +220,11 @@ Longbridge US position sync is implemented as a read-only provider:
 
 Current status: the provider can generate a sync proposal and apply the Cash Anchor subset after explicit command confirmation. A-share positions remain manual-ledger first.
 
-Longbridge sync is implemented through a fixed Python provider. It only runs the read-only whitelist command:
+Longbridge sync is implemented through a fixed Python provider. It only runs fixed read-only whitelist commands:
 
 ```text
 longbridge positions --format json
+longbridge quote <Cash Anchor symbols> --format json
 ```
 
 For Cash Anchor, the provider keeps only:
@@ -234,7 +235,7 @@ QQQI, XQQI, TQQQ
 
 Other Longbridge holdings are filtered out so growth positions do not enter the cash-flow ledger.
 
-Use `/apply longbridge cash_anchor` after reviewing the proposal. The apply command re-reads Longbridge positions, writes only QQQI/XQQI/TQQQ into the Cash Anchor ledger, and preserves existing current price, dividend, and tax fields where present.
+Use `/apply longbridge cash_anchor` after reviewing the proposal. The apply command re-reads Longbridge positions and quotes, writes only QQQI/XQQI/TQQQ into the Cash Anchor ledger, refreshes current price from quote data, and preserves existing dividend and tax fields where present.
 
 External command boundary:
 
@@ -296,8 +297,10 @@ The normal workflow is:
 1. Receive fragmentary knowledge.
 2. Generate a structured patch proposal.
 3. Run rules-change audit.
-4. Ask for human review.
-5. Only write to constitution files after explicit approval.
+4. Ask for human review with three choices: discuss, accept, or reject.
+5. If discussion is selected, normal Feishu messages are attached to that patch until the final decision. Each discussion turn calls the knowledge absorber LLM with the original proposal, target constitution, audit opinion, full patch discussion log, and the latest user message.
+6. The final decision is only accept or reject. There is no observation-pool state.
+7. Only write to constitution files after explicit approval.
 
 Local proposal and inbox files are stored under:
 

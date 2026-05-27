@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from src.app_config import get_config
@@ -57,14 +58,23 @@ def main() -> None:
         return P2CardActionTriggerResponse({"toast": {"type": "info", "content": result}})
 
     event_handler = (
-        EventDispatcherHandler.builder("", "")
+        EventDispatcherHandler.builder(settings.encrypt_key, settings.verification_token)
         .register_p2_im_message_receive_v1(on_message)
         .register_p2_card_action_trigger(on_card_action)
         .build()
     )
-    client = lark.ws.Client(settings.app_id, settings.app_secret, event_handler=event_handler)
-    print("Feishu long connection started.")
-    client.start()
+    while True:
+        client = lark.ws.Client(settings.app_id, settings.app_secret, event_handler=event_handler)
+        print("Feishu long connection started.", flush=True)
+        try:
+            client.start()
+        except KeyboardInterrupt:
+            print("Feishu long connection stopped by user.", flush=True)
+            raise
+        except Exception as exc:
+            print(f"Feishu long connection crashed: {exc}", flush=True)
+        print("Feishu long connection exited; restarting in 5 seconds.", flush=True)
+        time.sleep(5)
 
 
 def _model_to_dict(data: Any) -> dict[str, Any]:

@@ -14,6 +14,7 @@ from typing import Any
 
 
 LONGBRIDGE_POSITIONS_COMMAND = ["longbridge", "positions", "--format", "json"]
+LONGBRIDGE_QUOTE_COMMAND_PREFIX = ["longbridge", "quote"]
 CASH_ANCHOR_SYMBOLS = {"QQQI", "QQQI.US", "XQQI", "XQQI.US", "TQQQ", "TQQQ.US"}
 US_GROWTH_EXCLUDED_NOTE = "不属于 Cash Anchor 美股收益框架，保留给 Growth_Engine/US_Disruptive_Growth 或其他策略处理。"
 
@@ -32,12 +33,26 @@ class LongbridgePosition:
     account_channel: str = ""
 
 
+@dataclass(frozen=True)
+class LongbridgeQuote:
+    """Normalized Longbridge quote."""
+
+    symbol: str
+    current_price: float
+    quote_source: str
+    timestamp: str = ""
+
+
 def sync_longbridge_positions(timeout_seconds: int = 15) -> dict[str, Any]:
     """Run the fixed Longbridge positions command and build a filtered proposal."""
 
     raw = _run_longbridge_positions(timeout_seconds=timeout_seconds)
     positions = parse_longbridge_positions(raw)
-    return build_cash_anchor_sync_proposal(positions)
+    proposal = build_cash_anchor_sync_proposal(positions)
+    symbols = [item["symbol"] for item in proposal["included"]]
+    quotes = fetch_longbridge_quotes(symbols, timeout_seconds=timeout_seconds) if symbols else {}
+    _attach_quotes(proposal, quotes)
+    return proposal
 
 
 def parse_longbridge_positions(payload: str | dict[str, Any] | list[Any]) -> list[LongbridgePosition]:
@@ -107,12 +122,18 @@ def format_longbridge_sync_proposal(proposal: dict[str, Any]) -> str:
         lines.append("")
         lines.append("Cash Anchor 匹配持仓：")
         for item in included:
+            current_price = item.get("current_price")
+            current_text = (
+                f"，当前价 {float(current_price):,.4f} {item['currency']}"
+                if current_price not in (None, "")
+                else "，当前价未取得"
+            )
             lines.append(
                 f"- {item['symbol']} {item['name']}：{item['quantity']:,.2f} 股，"
-                f"成本价 {item['cost_price']:,.4f} {item['currency']}"
+                f"成本价 {item['cost_price']:,.4f} {item['currency']}{current_text}"
             )
         lines.append("")
-        lines.append("后续写入账本时，还需要补充 current=<当前价> 和 dividend=<每股年分红>。")
+        lines.append("后续写入账本时，还需要补充 dividend=<每股年分红>；当前价会从长桥 quote 只读行情同步。")
     else:
         lines.append("")
         lines.append("未发现 QQQI、XQQI、TQQQ 持仓。")
@@ -129,9 +150,10 @@ def format_longbridge_sync_proposal(proposal: dict[str, Any]) -> str:
 def apply_longbridge_cash_anchor_sync(timeout_seconds: int = 15) -> dict[str, Any]:
     """Apply Cash Anchor-eligible Longbridge positions to the local ledger.
 
-    Existing current price, dividend and tax fields are preserved. For newly
-    discovered symbols, current price defaults to Longbridge cost price and
-    dividend/tax default to 0 until the user records them explicitly.
+    Dividend and tax fields are preserved. Current price is refreshed from the
+    Longbridge read-only quote command when available. For newly discovered
+    symbols without quote data, current price defaults to Longbridge cost price
+    until the user records it explicitly.
     """
 
     proposal = sync_longbridge_positions(timeout_seconds=timeout_seconds)
@@ -151,10 +173,12 @@ def apply_longbridge_cash_anchor_sync(timeout_seconds: int = 15) -> dict[str, An
     for item in included:
         symbol = str(item["symbol"]).upper()
         current = existing.get(symbol) or existing.get(symbol.split(".", 1)[0])
-        current_price = current.current_price if current else float(item["cost_price"])
+        quote_price = _to_float(item.get("current_price"))
+        current_price = quote_price or (current.current_price if current else float(item["cost_price"]))
         dividend = current.annual_dividend_per_share if current else 0.0
         tax_rate = current.tax_rate if current else 0.0
-        notes = f"source=longbridge_cli; synced_at={datetime.now().replace(microsecond=0).isoformat()}"
+        quote_note = f"; quote_source={item.get('quote_source')}" if item.get("quote_source") else ""
+        notes = f"source=longbridge_cli; synced_at={datetime.now().replace(microsecond=0).isoformat()}{quote_note}"
         snapshot = upsert_holding(
             symbol=symbol,
             name=str(item["name"] or symbol),
@@ -214,8 +238,45 @@ def format_longbridge_apply_result(result: dict[str, Any]) -> str:
                 f"当前价 {item['current_price']:,.4f} USD，每股年分红 {item['annual_dividend_per_share']:,.4f} USD"
             )
     lines.append("")
-    lines.append("说明：已有持仓保留当前价、每股年分红和税率；新持仓的当前价暂用成本价，每股年分红为 0，后续可用 /holding 补充。")
+    lines.append("说明：当前价来自长桥 quote 只读行情；已有持仓保留每股年分红和税率；新持仓每股年分红为 0，后续可用 /holding 补充。")
     return "\n".join(lines)
+
+
+def fetch_longbridge_quotes(symbols: list[str], timeout_seconds: int = 15) -> dict[str, LongbridgeQuote]:
+    """Fetch read-only Longbridge quotes for known symbols."""
+
+    clean_symbols = [symbol.strip().upper() for symbol in symbols if symbol.strip()]
+    if not clean_symbols:
+        return {}
+    raw = _run_longbridge_quote(clean_symbols, timeout_seconds=timeout_seconds)
+    quotes = parse_longbridge_quotes(raw)
+    return {quote.symbol.upper(): quote for quote in quotes}
+
+
+def parse_longbridge_quotes(payload: str | list[Any] | dict[str, Any]) -> list[LongbridgeQuote]:
+    """Parse Longbridge quote JSON and select the freshest usable price."""
+
+    data = json.loads(payload) if isinstance(payload, str) else payload
+    rows: list[Any]
+    if isinstance(data, list):
+        rows = data
+    elif isinstance(data, dict):
+        body = data.get("data", data)
+        rows = body if isinstance(body, list) else body.get("list", []) if isinstance(body, dict) else []
+    else:
+        rows = []
+
+    quotes: list[LongbridgeQuote] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or "").strip().upper()
+        if not symbol:
+            continue
+        price, source, timestamp = _select_current_quote_price(row)
+        if price > 0:
+            quotes.append(LongbridgeQuote(symbol=symbol, current_price=price, quote_source=source, timestamp=timestamp))
+    return quotes
 
 
 def _run_longbridge_positions(timeout_seconds: int) -> str:
@@ -236,6 +297,69 @@ def _run_longbridge_positions(timeout_seconds: int) -> str:
         detail = (result.stderr or result.stdout or "").strip()
         raise RuntimeError(f"longbridge positions 执行失败：{detail or result.returncode}")
     return result.stdout
+
+
+def _run_longbridge_quote(symbols: list[str], timeout_seconds: int) -> str:
+    command = [*LONGBRIDGE_QUOTE_COMMAND_PREFIX, *symbols, "--format", "json"]
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("未找到 longbridge CLI。请先安装并执行 longbridge auth login。") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("longbridge quote 执行超时。") from exc
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(f"longbridge quote 执行失败：{detail or result.returncode}")
+    return result.stdout
+
+
+def _attach_quotes(proposal: dict[str, Any], quotes: dict[str, LongbridgeQuote]) -> None:
+    for item in proposal["included"]:
+        symbol = str(item["symbol"]).upper()
+        quote = quotes.get(symbol) or quotes.get(symbol.split(".", 1)[0])
+        if quote is None:
+            item["current_price"] = None
+            item["quote_source"] = ""
+            item["quote_timestamp"] = ""
+            continue
+        item["current_price"] = quote.current_price
+        item["quote_source"] = quote.quote_source
+        item["quote_timestamp"] = quote.timestamp
+
+
+def _select_current_quote_price(row: dict[str, Any]) -> tuple[float, str, str]:
+    candidates: list[tuple[datetime, float, str, str]] = []
+    for key in ("pre_market_quote", "post_market_quote", "overnight_quote"):
+        nested = row.get(key)
+        if not isinstance(nested, dict):
+            continue
+        price = _to_float(nested.get("last"))
+        timestamp_text = str(nested.get("timestamp") or "")
+        timestamp = _parse_quote_timestamp(timestamp_text)
+        if price > 0 and timestamp is not None:
+            candidates.append((timestamp, price, key, timestamp_text))
+    if candidates:
+        _, price, source, timestamp = max(candidates, key=lambda item: item[0])
+        return price, source, timestamp
+
+    price = _to_float(row.get("last") or row.get("last_done") or row.get("prev_close"))
+    return price, "last", ""
+
+
+def _parse_quote_timestamp(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _extract_position_rows(data: Any) -> list[tuple[str, dict[str, Any]]]:

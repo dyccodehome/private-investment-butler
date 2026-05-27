@@ -23,6 +23,7 @@ _LOCK = Lock()
 _PROCESSING_CHAT_IDS: set[str] = set()
 _SEEN_EVENT_IDS: set[str] = set()
 _PENDING_ACTIONS: dict[str, PendingAction] = {}
+_ACTIVE_PATCH_DISCUSSIONS: dict[str, PendingAction] = {}
 
 
 def acquire_processing(chat_id: str) -> bool:
@@ -74,6 +75,33 @@ def pop_pending_action(action_id: str) -> PendingAction | None:
         return _PENDING_ACTIONS.pop(action_id, None)
 
 
+def save_patch_discussion(chat_id: str, patch_id: str, framework_id: str | None = None) -> None:
+    """把某个 chat 标记为正在讨论一个宪法补丁。"""
+
+    with _LOCK:
+        _ACTIVE_PATCH_DISCUSSIONS[chat_id] = PendingAction(
+            chat_id=chat_id,
+            action_id=patch_id,
+            framework_id=framework_id,
+            reason=patch_id,
+            created_at=time(),
+        )
+
+
+def get_patch_discussion(chat_id: str) -> PendingAction | None:
+    """返回当前 chat 正在讨论的宪法补丁。"""
+
+    with _LOCK:
+        return _ACTIVE_PATCH_DISCUSSIONS.get(chat_id)
+
+
+def clear_patch_discussion(chat_id: str) -> None:
+    """结束当前 chat 的宪法补丁讨论。"""
+
+    with _LOCK:
+        _ACTIVE_PATCH_DISCUSSIONS.pop(chat_id, None)
+
+
 def runtime_status() -> dict[str, int]:
     """返回网关内存状态快照，供 /status 命令展示。"""
 
@@ -82,4 +110,5 @@ def runtime_status() -> dict[str, int]:
             "processing_chats": len(_PROCESSING_CHAT_IDS),
             "seen_events": len(_SEEN_EVENT_IDS),
             "pending_actions": len(_PENDING_ACTIONS),
+            "active_patch_discussions": len(_ACTIVE_PATCH_DISCUSSIONS),
         }
