@@ -27,7 +27,7 @@ class PortfolioLedgerTest(unittest.TestCase):
                 self.assertTrue(paths["capital_flows"].exists())
                 self.assertIn("2026-05-24,5000,CNY,salary", paths["capital_flows"].read_text())
 
-    def test_update_dividend_plan_changes_targets_and_keeps_progress(self) -> None:
+    def test_update_dividend_plan_changes_contribution_target_and_keeps_progress(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _ledger_paths(Path(tmp))
             with _patch_ledger_paths(paths):
@@ -37,15 +37,14 @@ class PortfolioLedgerTest(unittest.TestCase):
                 )
                 snapshot = portfolio_ledger.update_dividend_plan(
                     annual_contribution_target=60000,
-                    target_annual_dividend=120000,
                     as_of=date(2026, 5, 24),
                 )
 
                 self.assertEqual(snapshot["plan"]["annual_contribution_target"], 60000)
-                self.assertEqual(snapshot["plan"]["target_annual_dividend"], 120000)
                 self.assertEqual(snapshot["summary"]["current_year_contribution"], 5000)
                 self.assertEqual(snapshot["summary"]["annual_contribution_gap"], 55000)
                 self.assertAlmostEqual(snapshot["summary"]["annual_contribution_progress"], 0.083333)
+                self.assertNotIn("target_annual_dividend", snapshot["plan"])
 
     def test_negative_targets_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -131,6 +130,38 @@ class PortfolioLedgerTest(unittest.TestCase):
                 self.assertEqual([item.event_type for item in events], ["buy", "buy", "sell", "dividend"])
                 self.assertTrue(paths["portfolio_events"].exists())
 
+    def test_enriched_portfolio_snapshot_attaches_market_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _ledger_paths(Path(tmp))
+            with _patch_ledger_paths(paths):
+                portfolio_ledger.upsert_holding(
+                    symbol="600900.SH",
+                    name="长江电力",
+                    shares=1000,
+                    cost_price=24,
+                    current_price=24,
+                    annual_dividend_per_share=0,
+                    tax_rate=0,
+                    as_of=date(2026, 5, 24),
+                    notes="current_price=pending_quote",
+                )
+                before = paths["holdings"].read_text(encoding="utf-8")
+                with patch("src.market_data.provider_router.fetch_quote") as fetch_quote:
+                    fetch_quote.return_value.to_dict.return_value = {
+                        "status": "ok",
+                        "source": "yfinance",
+                        "market": "CN",
+                        "symbol": "600900.SH",
+                        "data": {"current_price": 28.5, "annual_dividend_per_share": 0.82},
+                        "error": "",
+                    }
+                    snapshot = portfolio_ledger.build_enriched_portfolio_snapshot(as_of=date(2026, 5, 24))
+                after = paths["holdings"].read_text(encoding="utf-8")
+
+        self.assertEqual(snapshot["market_data"]["600900.SH"]["source"], "yfinance")
+        self.assertEqual(before, after)
+        fetch_quote.assert_called_once_with("600900.SH", market="A股")
+
 
 def _ledger_paths(root: Path) -> dict[str, Path]:
     data = root / "data"
@@ -143,7 +174,6 @@ def _ledger_paths(root: Path) -> dict[str, Path]:
                 "base_year: 2026",
                 "retirement_years: 10",
                 "annual_contribution_target: 50000",
-                "target_annual_dividend: 115000",
                 "currency: CNY",
                 "",
             ]

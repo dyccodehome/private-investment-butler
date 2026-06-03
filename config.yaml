@@ -45,8 +45,10 @@ frameworks:
     reasoning_effort: medium
     max_output_tokens: 4096
     allowed_skills:
+      - portfolio_snapshot
       - hithink-market-query
       - position_snapshot
+      - research_dossier
       - trade_history
       - news-search
   Growth_Engine:
@@ -57,6 +59,7 @@ frameworks:
     allowed_skills:
       - hithink-market-query
       - position_snapshot
+      - research_dossier
       - trade_history
       - news-search
 
@@ -89,11 +92,59 @@ iwencai:
   api_key_env: IWENCAI_API_KEY
   api_url_env: IWENCAI_API_URL
 
+scheduler:
+  enabled: true
+  timezone: Asia/Shanghai
+  dry_run_by_default: false
+  skip_weekends_for_daily: true
+  skip_holidays: true
+  holidays:
+    CN: []
+    US: []
+  jobs:
+    growth_cn_daily_review:
+      enabled: true
+      type: growth_daily_review
+      market: CN
+      schedule: daily
+      time: "16:30"
+    growth_us_daily_review:
+      enabled: true
+      type: growth_daily_review
+      market: US
+      schedule: daily
+      time: "06:00"
+    growth_weekly_review:
+      enabled: true
+      type: growth_weekly_review
+      market: ALL
+      schedule: weekly
+      weekday: sunday
+      time: "20:00"
+
 token_monitor:
   enabled: true
   daily_total_token_limit: 300000
   per_session_token_limit: 50000
   warning_threshold: 0.8
+
+budgets:
+  default:
+    max_tokens: 12000
+    warn_tokens: 9000
+  workflows:
+    natural_language_pipeline:
+      max_tokens: 20000
+      warn_tokens: 15000
+    growth_daily_review:
+      max_tokens: 30000
+      warn_tokens: 24000
+    knowledge_absorb:
+      max_tokens: 40000
+      warn_tokens: 32000
+    absorb_discussion:
+      max_tokens: 25000
+      warn_tokens: 20000
 
 cost_management:
   currency: USD

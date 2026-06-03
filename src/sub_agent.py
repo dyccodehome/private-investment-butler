@@ -191,7 +191,7 @@ def stage_one_request_skills(state: AgentState) -> AgentState:
             SkillRequest(
                 skill_name="portfolio_snapshot",
                 arguments={"scope": "cash_anchor_dividend_retirement"},
-                reason="需要读取 Cash_Anchor 本地持仓、年度投入和退休分红目标账本，进行确定性计算。",
+                reason="需要读取 Cash_Anchor 本地持仓、年度投入计划、实际分红能力和只读行情数据，进行确定性计算。",
             )
         )
     if should_use_research_dossier(state.user_input):
@@ -213,11 +213,11 @@ def stage_one_request_skills(state: AgentState) -> AgentState:
                 SkillRequest(
                     skill_name="hithink-market-query",
                     arguments={"symbol": symbol},
-                    reason="需要通过同花顺问财行情 Skill 获取实时市场事实。",
+                    reason="需要通过统一市场数据 Provider 获取只读行情事实。",
                 ),
                 SkillRequest(
                     skill_name="trade_history",
-                    arguments={"symbol": symbol},
+                    arguments={"framework_id": state.framework_id, "symbol": symbol},
                     reason="需要读取历史决策逻辑，避免重复犯错。",
                 ),
             ]

@@ -229,7 +229,6 @@ def _ledger_paths(root: Path) -> dict[str, Path]:
                 "base_year: 2026",
                 "retirement_years: 10",
                 "annual_contribution_target: 50000",
-                "target_annual_dividend: 115000",
                 "currency: USD",
                 "",
             ]

@@ -59,7 +59,12 @@ def audit_before_output(state: AgentState) -> AgentState:
     # 审计路径不信任子 Agent 的摘要，而是通过同一披露边界加载自己的反方证据 Skill。
     symbol = extract_symbol(state.user_input)
     adverse_arguments = {"symbol": symbol} if symbol else {"query": state.user_input[:120]}
-    adverse_skill = load_skill("news-search", adverse_arguments)
+    adverse_skill = load_skill(
+        "news-search",
+        adverse_arguments,
+        framework_id=state.framework_id,
+        agent_role="auditor",
+    )
     state.disclosed_data.append(
         DisclosureRecord(
             skill_name="news-search",

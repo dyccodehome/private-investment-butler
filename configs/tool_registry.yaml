@@ -1,0 +1,157 @@
+tools:
+  portfolio_snapshot:
+    description: 读取 Cash_Anchor 本地持仓、投入计划和分红能力快照。
+    risk_level: low
+    access_type: local_read
+    allowed_frameworks:
+      - Cash_Anchor
+    allowed_agents:
+      - worker
+    requires_human_approval: false
+    timeout_seconds: 10
+    audit_level: full
+    output_schema: SkillPayload
+    data_type: portfolio_snapshot
+
+  position_snapshot:
+    description: 读取本地 Cash/Growth 当前仓位事实。
+    risk_level: low
+    access_type: local_read
+    allowed_frameworks:
+      - Cash_Anchor
+      - Growth_Engine
+    allowed_agents:
+      - worker
+      - auditor
+    requires_human_approval: false
+    timeout_seconds: 10
+    audit_level: full
+    output_schema: SkillPayload
+    data_type: position_snapshot
+
+  research_dossier:
+    description: 读取或准备策略岛内的个股研究档案。
+    risk_level: low
+    access_type: local_read
+    allowed_frameworks:
+      - Cash_Anchor
+      - Growth_Engine
+    allowed_agents:
+      - worker
+      - auditor
+    requires_human_approval: false
+    timeout_seconds: 10
+    audit_level: full
+    output_schema: SkillPayload
+    data_type: research_dossier
+
+  hithink-market-query:
+    description: 通过统一市场数据 Provider 获取只读行情事实。
+    risk_level: low
+    access_type: external_read
+    allowed_frameworks:
+      - Cash_Anchor
+      - Growth_Engine
+    allowed_agents:
+      - worker
+      - auditor
+    requires_human_approval: false
+    timeout_seconds: 20
+    audit_level: full
+    output_schema: SkillPayload
+    data_type: market_data
+
+  hithink-finance-query:
+    description: 兼容入口，通过统一市场数据 Provider 返回金融数据。
+    risk_level: low
+    access_type: external_read
+    allowed_frameworks:
+      - Cash_Anchor
+      - Growth_Engine
+    allowed_agents:
+      - worker
+      - auditor
+    requires_human_approval: false
+    timeout_seconds: 20
+    audit_level: full
+    output_schema: SkillPayload
+    data_type: market_data
+
+  hithink-basicinfo-query:
+    description: 兼容入口，通过统一市场数据 Provider 返回基础行情事实。
+    risk_level: low
+    access_type: external_read
+    allowed_frameworks:
+      - Cash_Anchor
+      - Growth_Engine
+    allowed_agents:
+      - worker
+      - auditor
+    requires_human_approval: false
+    timeout_seconds: 20
+    audit_level: full
+    output_schema: SkillPayload
+    data_type: market_data
+
+  trade_history:
+    description: 从本地会话黑匣子和研究档案检索历史判断。
+    risk_level: low
+    access_type: local_read
+    allowed_frameworks:
+      - Cash_Anchor
+      - Growth_Engine
+    allowed_agents:
+      - worker
+      - auditor
+    requires_human_approval: false
+    timeout_seconds: 10
+    audit_level: full
+    output_schema: SkillPayload
+    data_type: trade_history
+
+  news-search:
+    description: 调用财经新闻搜索 Provider 获取外部只读资讯。
+    risk_level: low
+    access_type: external_read
+    allowed_frameworks:
+      - Cash_Anchor
+      - Growth_Engine
+    allowed_agents:
+      - worker
+      - auditor
+    requires_human_approval: false
+    timeout_seconds: 20
+    audit_level: full
+    output_schema: SkillPayload
+    data_type: news
+
+  longbridge_positions:
+    description: 读取长桥持仓并生成只读同步提案。
+    risk_level: medium
+    access_type: external_read
+    allowed_frameworks:
+      - Cash_Anchor
+    allowed_agents:
+      - command
+    allowed_commands:
+      - longbridge positions --format json
+    requires_human_approval: false
+    timeout_seconds: 15
+    audit_level: full
+    output_schema: LongbridgeSyncProposal
+    data_type: broker_position_sync
+
+  accept_patch_proposal:
+    description: 将人工确认后的宪法补丁写入目标 constitution 文件。
+    risk_level: high
+    access_type: rule_write
+    allowed_frameworks:
+      - Cash_Anchor
+      - Growth_Engine
+    allowed_agents:
+      - human_callback
+    requires_human_approval: true
+    timeout_seconds: 20
+    audit_level: full
+    output_schema: PatchArchiveResult
+    data_type: rule_change

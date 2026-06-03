@@ -62,12 +62,27 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "model": "deepseek-v4-pro",
             "reasoning_effort": "medium",
             "max_output_tokens": 4096,
+            "allowed_skills": [
+                "portfolio_snapshot",
+                "position_snapshot",
+                "research_dossier",
+                "hithink-market-query",
+                "trade_history",
+                "news-search",
+            ],
         },
         "Growth_Engine": {
             "provider": "deepseek",
             "model": "deepseek-v4-pro",
             "reasoning_effort": "high",
             "max_output_tokens": 4096,
+            "allowed_skills": [
+                "position_snapshot",
+                "research_dossier",
+                "hithink-market-query",
+                "trade_history",
+                "news-search",
+            ],
         },
     },
     "agents": {
@@ -84,14 +99,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "max_output_tokens": 2400,
         },
     },
-        "messaging": {
-            "provider": "feishu",
-            "app_id_env": "FEISHU_APP_ID",
-            "app_secret_env": "FEISHU_APP_SECRET",
-            "lark_host": "https://open.feishu.cn",
-            "verification_token_env": "FEISHU_VERIFICATION_TOKEN",
-            "encrypt_key_env": "FEISHU_ENCRYPT_KEY",
-        },
+    "messaging": {
+        "provider": "feishu",
+        "app_id_env": "FEISHU_APP_ID",
+        "app_secret_env": "FEISHU_APP_SECRET",
+        "lark_host": "https://open.feishu.cn",
+        "verification_token_env": "FEISHU_VERIFICATION_TOKEN",
+        "encrypt_key_env": "FEISHU_ENCRYPT_KEY",
+        "default_chat_id_env": "FEISHU_DEFAULT_CHAT_ID",
+    },
     "yuque": {
         "token_env": "YUQUE_TOKEN",
         "namespace_env": "YUQUE_NAMESPACE",
@@ -106,6 +122,30 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "daily_total_token_limit": 300000,
         "per_session_token_limit": 50000,
         "warning_threshold": 0.8,
+    },
+    "budgets": {
+        "default": {
+            "max_tokens": 12000,
+            "warn_tokens": 9000,
+        },
+        "workflows": {
+            "natural_language_pipeline": {
+                "max_tokens": 20000,
+                "warn_tokens": 15000,
+            },
+            "growth_daily_review": {
+                "max_tokens": 30000,
+                "warn_tokens": 24000,
+            },
+            "knowledge_absorb": {
+                "max_tokens": 40000,
+                "warn_tokens": 32000,
+            },
+            "absorb_discussion": {
+                "max_tokens": 25000,
+                "warn_tokens": 20000,
+            },
+        },
     },
     "cost_management": {
         "currency": "USD",
@@ -175,6 +215,7 @@ class MessagingSettings:
     lark_host: str
     verification_token: str = field(repr=False)
     encrypt_key: str = field(repr=False)
+    default_chat_id: str = field(default="", repr=False)
 
 
 class AppConfig:
@@ -229,6 +270,12 @@ class AppConfig:
             max_output_tokens=int(section.get("max_output_tokens") or provider_settings.default_max_output_tokens),
         )
 
+    def router_max_route_retries(self) -> int:
+        """读取 Master 路由和 Worker 弹回之间的最大重试次数。"""
+
+        section = self.raw.get("router", {})
+        return int(section.get("max_route_retries") or 3)
+
     def agent_llm(self, agent_role: str, framework_id: str | None = None) -> FrameworkLLMSettings:
         """读取 Agent 角色级模型配置；没有角色配置时回退到策略框架配置。"""
 
@@ -246,6 +293,15 @@ class AppConfig:
             max_output_tokens=int(section.get("max_output_tokens") or provider_settings.default_max_output_tokens),
         )
 
+    def framework_allowed_skills(self, framework_id: str | None) -> list[str]:
+        """读取策略框架允许披露的 Skill 白名单。"""
+
+        section = self.raw.get("frameworks", {}).get(framework_id or "", {})
+        skills = section.get("allowed_skills") or []
+        if not isinstance(skills, list):
+            return []
+        return [str(item) for item in skills]
+
     def messaging(self) -> MessagingSettings:
         section = self.raw["messaging"]
         return MessagingSettings(
@@ -255,12 +311,18 @@ class AppConfig:
             lark_host=str(section.get("lark_host", "https://open.feishu.cn")).rstrip("/"),
             verification_token=os.getenv(str(section["verification_token_env"]), ""),
             encrypt_key=os.getenv(str(section["encrypt_key_env"]), ""),
+            default_chat_id=os.getenv(str(section.get("default_chat_id_env", "FEISHU_DEFAULT_CHAT_ID")), ""),
         )
 
     def token_monitor(self) -> dict[str, Any]:
         """以普通字典形式返回 Token 监控配置。"""
 
         return dict(self.raw.get("token_monitor", {}))
+
+    def budgets(self) -> dict[str, Any]:
+        """以普通字典形式返回 workflow token 预算配置。"""
+
+        return dict(self.raw.get("budgets", {}))
 
     def cost_management(self) -> dict[str, Any]:
         """以普通字典形式返回成本管理配置。"""

@@ -68,13 +68,12 @@ class PortfolioEvent:
 
 @dataclass(frozen=True)
 class DividendPlan:
-    """现金流退休计划的核心目标参数。"""
+    """现金流执行计划的核心参数。"""
 
     plan_name: str = "Cash Anchor 10 Year Retirement Plan"
     base_year: int = 2026
     retirement_years: int = 10
     annual_contribution_target: float = 0.0
-    target_annual_dividend: float = 0.0
     currency: str = "CNY"
 
 
@@ -119,16 +118,8 @@ def build_portfolio_snapshot(as_of: date | None = None) -> dict[str, Any]:
                 current_year_contribution,
                 plan.annual_contribution_target,
             ),
-            "annual_dividend_progress": _safe_ratio(
-                net_annual_dividend,
-                plan.target_annual_dividend,
-            ),
             "annual_contribution_gap": round(
                 max(plan.annual_contribution_target - current_year_contribution, 0),
-                2,
-            ),
-            "annual_dividend_gap": round(
-                max(plan.target_annual_dividend - net_annual_dividend, 0),
                 2,
             ),
         },
@@ -141,6 +132,28 @@ def build_portfolio_snapshot(as_of: date | None = None) -> dict[str, Any]:
             "dividend_plan": str(TEMPLATE_DIR / "dividend_plan.yaml"),
         },
     }
+
+
+def build_enriched_portfolio_snapshot(as_of: date | None = None) -> dict[str, Any]:
+    """Build Cash Anchor snapshot with read-only market data for analysis."""
+
+    from src.market_data import fetch_market_data
+
+    snapshot = build_portfolio_snapshot(as_of=as_of)
+    market_data: dict[str, Any] = {}
+    for item in snapshot.get("positions", []):
+        symbol = str(item.get("symbol") or "")
+        if not symbol:
+            continue
+        market_data[symbol] = fetch_market_data(symbol, market=str(item.get("market") or ""))
+    enriched = dict(snapshot)
+    enriched["market_data"] = market_data
+    enriched["market_data_policy"] = {
+        "source_rule": "CN uses yfinance; US uses Longbridge.",
+        "failure_policy": "If status is error, treat current quote/dividend as missing and state the data gap.",
+        "write_policy": "Read-only during analysis; do not overwrite holdings.csv automatically.",
+    }
+    return enriched
 
 
 def record_capital_contribution(
@@ -194,14 +207,13 @@ def record_capital_contribution(
 def update_dividend_plan(
     *,
     annual_contribution_target: float | None = None,
-    target_annual_dividend: float | None = None,
     currency: str | None = None,
     plan_name: str | None = None,
     base_year: int | None = None,
     retirement_years: int | None = None,
     as_of: date | None = None,
 ) -> dict[str, Any]:
-    """更新退休现金流计划目标，并返回更新后的快照。"""
+    """更新 Cash Anchor 年度投入计划，并返回更新后的快照。"""
 
     _ensure_cash_anchor_data_files()
     current = read_dividend_plan()
@@ -214,17 +226,10 @@ def update_dividend_plan(
             if annual_contribution_target is not None
             else current.annual_contribution_target
         ),
-        target_annual_dividend=(
-            target_annual_dividend
-            if target_annual_dividend is not None
-            else current.target_annual_dividend
-        ),
         currency=currency or current.currency,
     )
     if updated.annual_contribution_target < 0:
         raise ValueError("年度投入目标不能为负数。")
-    if updated.target_annual_dividend < 0:
-        raise ValueError("目标年分红不能为负数。")
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     DIVIDEND_PLAN_PATH.write_text(
@@ -234,7 +239,6 @@ def update_dividend_plan(
                 f"base_year: {updated.base_year}",
                 f"retirement_years: {updated.retirement_years}",
                 f"annual_contribution_target: {_format_amount(updated.annual_contribution_target)}",
-                f"target_annual_dividend: {_format_amount(updated.target_annual_dividend)}",
                 f"currency: {updated.currency}",
                 "",
             ]
@@ -514,21 +518,18 @@ def format_contribution_progress(result: dict[str, Any]) -> str:
 
 
 def format_plan_progress(snapshot: dict[str, Any]) -> str:
-    """格式化目标更新后的年度进度。"""
+    """格式化年度投入计划更新后的进度。"""
 
     plan = snapshot["plan"]
     summary = snapshot["summary"]
     currency = plan["currency"]
     return (
-        "已更新 Cash Anchor 目标：\n"
+        "已更新 Cash Anchor 年度投入计划：\n"
         f"- 年度工资投入目标：{_money(plan['annual_contribution_target'], currency)}\n"
-        f"- 目标年分红：{_money(plan['target_annual_dividend'], currency)}\n"
         f"- 今年已投入：{_money(summary['current_year_contribution'], currency)}\n"
         f"- 投入完成进度：{float(summary['annual_contribution_progress'] or 0):.1%}\n"
         f"- 今年投入缺口：{_money(summary['annual_contribution_gap'], currency)}\n"
         f"- 当前净年分红能力：{_money(summary['net_annual_dividend'], currency)}\n"
-        f"- 分红目标进度：{float(summary['annual_dividend_progress'] or 0):.1%}\n"
-        f"- 分红目标缺口：{_money(summary['annual_dividend_gap'], currency)}\n"
         f"- 计划文件：{snapshot['dividend_plan_path']}"
     )
 
@@ -542,17 +543,23 @@ def format_holding_progress(snapshot: dict[str, Any]) -> str:
     currency = holding["currency"]
     gross = float(holding["shares"]) * float(holding["annual_dividend_per_share"])
     net = gross * max(1 - float(holding["tax_rate"]), 0)
+    dividend_text = (
+        _money(holding["annual_dividend_per_share"], currency)
+        if float(holding["annual_dividend_per_share"]) > 0
+        else "待估算"
+    )
+    current_text = (
+        "待查询"
+        if "current_price=pending_quote" in str(holding.get("notes") or "")
+        else _money(holding["current_price"], currency)
+    )
     return (
         f"{action}持仓：{holding['symbol']} {holding['name']}\n"
         f"- 份额：{holding['shares']:,.2f}\n"
         f"- 成本价：{_money(holding['cost_price'], currency)}\n"
-        f"- 当前价：{_money(holding['current_price'], currency)}\n"
-        f"- 单位年分红：{_money(holding['annual_dividend_per_share'], currency)}\n"
-        f"- 该持仓预估税前年分红：{_money(gross, currency)}\n"
-        f"- 该持仓预估税后年分红：{_money(net, currency)}\n"
+        f"- 当前价：{current_text}\n"
+        f"- 单位年分红：{dividend_text}\n"
         f"- 组合预估税后年分红：{_money(summary['net_annual_dividend'], currency)}\n"
-        f"- 分红目标进度：{float(summary['annual_dividend_progress'] or 0):.1%}\n"
-        f"- 分红目标缺口：{_money(summary['annual_dividend_gap'], currency)}\n"
         f"- 账本：{snapshot['holdings_path']}"
     )
 
@@ -566,7 +573,6 @@ def format_buy_progress(snapshot: dict[str, Any]) -> str:
         f"- 当前份额：{holding['shares']:,.2f}\n"
         f"- 更新后成本价：{_money(holding['cost_price'], currency)}\n"
         f"- 预估税后年分红：{_money(summary['net_annual_dividend'], currency)}\n"
-        f"- 分红目标进度：{float(summary['annual_dividend_progress'] or 0):.1%}\n"
         f"- 事件账本：{snapshot['event_path']}"
     )
 
@@ -578,7 +584,6 @@ def format_sell_progress(snapshot: dict[str, Any]) -> str:
         f"已记录卖出：{snapshot['sold_symbol']}\n"
         f"- 剩余份额：{snapshot['remaining_shares']:,.2f}\n"
         f"- 组合预估税后年分红：{_money(summary['net_annual_dividend'], currency)}\n"
-        f"- 分红目标进度：{float(summary['annual_dividend_progress'] or 0):.1%}\n"
         f"- 事件账本：{snapshot['event_path']}"
     )
 
@@ -606,7 +611,6 @@ def format_snapshot(snapshot: dict[str, Any]) -> str:
         f"- 成本税后股息率：{float(summary['net_yield_on_cost'] or 0):.2%}\n"
         f"- 当前年投入：{_money(summary['current_year_contribution'], currency)}\n"
         f"- 投入目标进度：{float(summary['annual_contribution_progress'] or 0):.1%}\n"
-        f"- 分红目标进度：{float(summary['annual_dividend_progress'] or 0):.1%}\n"
         f"- 持仓账本：{snapshot['data_files']['holdings']}\n"
         f"- 事件账本：{snapshot['data_files']['portfolio_events']}"
     )
@@ -707,7 +711,7 @@ def read_portfolio_events() -> list[PortfolioEvent]:
 
 
 def read_dividend_plan() -> DividendPlan:
-    """读取 `data/dividend_plan.yaml`；缺失时返回空目标。"""
+    """读取 `data/dividend_plan.yaml`；旧版目标年分红字段会被忽略。"""
 
     if not DIVIDEND_PLAN_PATH.exists():
         return DividendPlan()
@@ -717,7 +721,6 @@ def read_dividend_plan() -> DividendPlan:
         base_year=int(_to_float(data.get("base_year")) or 2026),
         retirement_years=int(_to_float(data.get("retirement_years")) or 10),
         annual_contribution_target=_to_float(data.get("annual_contribution_target")),
-        target_annual_dividend=_to_float(data.get("target_annual_dividend")),
         currency=str(data.get("currency") or "CNY"),
     )
 
@@ -738,7 +741,6 @@ def _ensure_cash_anchor_data_files() -> None:
                         "base_year: 2026",
                         "retirement_years: 10",
                         "annual_contribution_target: 50000",
-                        "target_annual_dividend: 115000",
                         "currency: CNY",
                         "",
                     ]

@@ -1,20 +1,24 @@
-"""Centralized LLM prompt builders."""
+"""Prompt template loading and rendering.
+
+Prompt bodies live under ``prompts/`` so system and user prompts can be reviewed
+without editing Python code. This module keeps stable builder functions for the
+rest of the application.
+"""
 
 from __future__ import annotations
 
-from src.prompt_policy import RESPONSE_STYLE_SYSTEM_PROMPT
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
+from src.init import PROJECT_ROOT
+
+
+PROMPTS_DIR = PROJECT_ROOT / "prompts"
 
 
 def worker_system_prompt() -> str:
-    return (
-        "你是私人投资管家的子 Agent。你只能依据当前策略宪法、用户原话、"
-        "主管道披露的数据进行 If-Then 推演。不要编造未披露的实时数据。"
-        "涉及个股研究档案时，必须检查旧论据是否仍跟上最新事实；"
-        "资本市场里，过期的判断比没有判断更危险。"
-        "涉及本地文件路径时，必须逐字使用已披露数据中的 data_files 或 template_files，"
-        "不得凭记忆改写路径。"
-        f"{RESPONSE_STYLE_SYSTEM_PROMPT}"
-    )
+    return _render("worker/system.md")
 
 
 def worker_user_prompt(
@@ -27,44 +31,26 @@ def worker_user_prompt(
     disclosed_data_names: str,
     disclosed_data: str,
 ) -> str:
-    return (
-        f"策略框架：{framework_id}\n"
-        f"上下文包：{context_bundle_id}\n"
-        f"已加载上下文文件：{loaded_context_files}\n"
-        f"策略上下文：\n{strategy_context}\n\n"
-        f"用户原话：{user_input}\n\n"
-        f"已披露数据来源：{disclosed_data_names}\n"
-        f"已披露数据：{disclosed_data}\n\n"
-        "请输出：1. 核心判断；2. 信息与论据；3. 量化验证；"
-        "4. 风险管理；5. If-Then 执行纪律；6. 需要人工确认或更新档案的事项。"
+    return _render(
+        "worker/user.md",
+        framework_id=framework_id,
+        context_bundle_id=context_bundle_id,
+        loaded_context_files=loaded_context_files,
+        strategy_context=strategy_context,
+        user_input=user_input,
+        disclosed_data_names=disclosed_data_names,
+        disclosed_data=disclosed_data,
     )
 
 
 def auditor_system_prompt(persona: str, *, risk_persona: str, purist_persona: str) -> str:
-    shared_boundary = (
-        "你负责对投资建议做独立审计。不要复述或美化子 Agent 的结论。"
-        "你必须检查幻觉、顺从、数据不足、规则漂移、风险失控和过拟合。"
-        "你的输出会被主管道用于判断是否暂停流程，所以结论必须保守、清晰、可执行。"
-        f"{RESPONSE_STYLE_SYSTEM_PROMPT}"
-    )
     if persona == risk_persona:
-        return (
-            shared_boundary
-            + "当前审计重点是回撤和仓位风险。"
-            "当子 Agent 提出买入、加仓、补仓、建仓或增持时，你必须默认不信任这个提案，"
-            "重点检查买入理由、仓位上限、止损纪律、流动性、估值、财报质量、宏观风险和用户情绪驱动。"
-            "只有在证据充分、风险边界清楚、仓位纪律明确时，才允许放行。"
-        )
-    if persona == purist_persona:
-        return (
-            shared_boundary
-            + "当前审计重点是规则变更是否过拟合。"
-            "你需要维护投资框架的长期稳定性，避免因为短期市场波动、单一个股故事、"
-            "社媒情绪或幸存者案例而频繁修改核心规则。"
-            "你必须审查新规则是否具备跨周期通用性、明确适用边界、可验证指标、失效条件和退出条件。"
-            "如果新知识缺少可验证依据，或者会削弱既有框架纪律，必须拒绝。"
-        )
-    return shared_boundary + "你需要以中性但严格的方式检查建议是否符合既有框架、事实是否足够、风险是否被表达清楚。"
+        persona_template = "auditor/system_risk.md"
+    elif persona == purist_persona:
+        persona_template = "auditor/system_purist.md"
+    else:
+        persona_template = "auditor/system_neutral.md"
+    return _join(_render("auditor/system_base.md"), _render(persona_template))
 
 
 def auditor_user_prompt(
@@ -75,38 +61,18 @@ def auditor_user_prompt(
     draft_decision: str | None,
     disclosed_data_summary: str,
 ) -> str:
-    return (
-        f"framework_id: {framework_id}\n"
-        f"context_bundle_id: {context_bundle_id}\n\n"
-        f"用户原话：\n{user_input}\n\n"
-        f"子 Agent 草案：\n{draft_decision}\n\n"
-        f"已披露数据摘要：\n{disclosed_data_summary}\n\n"
-        "请完成闭门反方审计。输出必须遵守：\n"
-        "第一行只能是 [ALLOW]、[WARN]、[REJECT] 或 [HUMAN_REVIEW]。\n"
-        "随后用以下小标题给出简洁结论：\n"
-        "1. 宪法一致性\n"
-        "2. 事实充分性\n"
-        "3. 反方证据\n"
-        "4. 仓位与回撤风险\n"
-        "5. 审计结论\n"
-        "如果存在重大事实缺口、回撤风险不可控、或建议明显迎合用户情绪，必须输出 [REJECT]。"
+    return _render(
+        "auditor/user.md",
+        framework_id=framework_id,
+        context_bundle_id=context_bundle_id,
+        user_input=user_input,
+        draft_decision=draft_decision,
+        disclosed_data_summary=disclosed_data_summary,
     )
 
 
 def knowledge_absorber_system_prompt() -> str:
-    return (
-        "你负责评估外部知识是否应转化为投资框架补丁。"
-        "你的职责不是保存文章，而是把外部碎片知识提炼为可审计、可执行、可拒绝的投资框架补丁。"
-        "你需要维护投资框架的长期稳定性，避免因为短期市场波动、单一个股故事、"
-        "社媒情绪或幸存者案例而频繁修改核心规则。"
-        "必须过滤情绪、故事、个股传闻和时代噪音。"
-        "必须检查新知识与现有 constitution 的关系：补充、细化、冲突或拒绝。"
-        "只有具备跨周期通用性、明确适用边界、可验证指标、失效条件和退出条件的知识，"
-        "才允许生成候选补丁。"
-        "如果新知识证据不足或过度依赖短期市况，必须把 conflict_type 设为 reject。"
-        "只返回 JSON，不要返回 Markdown 包裹。"
-        f"{RESPONSE_STYLE_SYSTEM_PROMPT}"
-    )
+    return _render("knowledge_absorber/system.md")
 
 
 def knowledge_absorber_user_prompt(
@@ -119,42 +85,20 @@ def knowledge_absorber_user_prompt(
     constitution: str,
     source_text: str,
 ) -> str:
-    return (
-        f"patch_id: {patch_id}\n"
-        f"framework_id: {framework_id}\n\n"
-        f"target_id: {target_id}\n"
-        f"target_name: {target_name}\n"
-        f"target_file: {target_file}\n\n"
-        f"现有目标文件内容：\n{constitution}\n\n"
-        f"待吸收知识：\n{source_text}\n\n"
-        "请返回严格 JSON，字段如下：\n"
-        "{\n"
-        '  "source_summary": "一句话概括知识来源",\n'
-        '  "extracted_principles": ["只保留底层逻辑因子"],\n'
-        '  "applicability": {"market": "", "strategy": "", "conditions": [], "invalid_when": []},\n'
-        '  "conflict_type": "supplement|refine|conflict|reject",\n'
-        '  "target_section": "目标文件中需要替换的旧片段；若只能新增则写建议插入点原文",\n'
-        '  "old_problem": "旧条文的问题或冲突点",\n'
-        '  "patch_markdown": "候选 Markdown 条文",\n'
-        '  "auditor_opinion": "反方审计意见",\n'
-        '  "risk_level": "low|medium|high"\n'
-        "}\n"
-        "如果新知识证据不足或过度情绪化，conflict_type 必须为 reject，patch_markdown 留空。"
+    return _render(
+        "knowledge_absorber/user.md",
+        patch_id=patch_id,
+        framework_id=framework_id,
+        target_id=target_id,
+        target_name=target_name,
+        target_file=target_file,
+        constitution=constitution,
+        source_text=source_text,
     )
 
 
 def absorb_discussion_system_prompt() -> str:
-    return (
-        "你负责和用户讨论一个待定的投资框架补丁。"
-        "你的目标不是迎合用户，而是通过追问和修订，把碎片知识变成明确可执行的规则，"
-        "或者明确拒绝进入宪法。"
-        "你必须基于目标宪法、初版提案、审计意见和完整讨论日志作答。"
-        "不要引入未披露事实。不要把短期情绪、个股故事或一次性经验写成长期规则。"
-        "如果信息还不够，只问一个最关键的问题。"
-        "如果已经足够，给出建议加入或建议拒绝，但最终仍需要用户确认。"
-        "只返回 JSON，不要返回 Markdown 包裹。"
-        f"{RESPONSE_STYLE_SYSTEM_PROMPT}"
-    )
+    return _render("absorb_discussion/system.md")
 
 
 def absorb_discussion_user_prompt(
@@ -164,20 +108,50 @@ def absorb_discussion_user_prompt(
     discussion_log: str,
     latest_user_message: str,
 ) -> str:
-    return (
-        f"当前 patch proposal JSON：\n{patch_json}\n\n"
-        f"目标宪法全文：\n{constitution}\n\n"
-        f"完整讨论日志：\n{discussion_log}\n\n"
-        f"用户最新回复：\n{latest_user_message}\n\n"
-        "请返回严格 JSON，字段如下：\n"
-        "{\n"
-        '  "status": "need_more_discussion|ready_to_accept|recommend_reject",\n'
-        '  "reply_to_user": "给用户的下一轮回复，必须简洁、直接",\n'
-        '  "updated_patch_markdown": "如果需要修订候选补丁，写完整候选 Markdown；否则沿用原补丁",\n'
-        '  "updated_target_section": "如果目标替换片段需要变化，写完整旧片段；否则沿用原 target_section",\n'
-        '  "decision_reason": "为什么继续讨论、建议加入或建议拒绝",\n'
-        '  "next_question": "如果还需要讨论，只问一个问题；否则留空"\n'
-        "}\n"
-        "如果 status 是 ready_to_accept，reply_to_user 必须明确说明用户仍需回复“同意”才会写入。"
-        "如果 status 是 recommend_reject，reply_to_user 必须明确说明用户仍需回复“拒绝”才会归档拒绝。"
+    return _render(
+        "absorb_discussion/user.md",
+        patch_json=patch_json,
+        constitution=constitution,
+        discussion_log=discussion_log,
+        latest_user_message=latest_user_message,
     )
+
+
+def growth_review_system_prompt() -> str:
+    return _render("growth_review/system.md")
+
+
+def growth_review_user_prompt(
+    *,
+    review_type: str,
+    market: str,
+    symbol: str,
+    strategy_context: str,
+    snapshot_json: str,
+) -> str:
+    return _render(
+        "growth_review/user.md",
+        review_type=review_type,
+        market=market,
+        symbol_or_all=symbol or "全部",
+        strategy_context=strategy_context,
+        snapshot_json=snapshot_json,
+    )
+
+
+def _render(relative_path: str, **values: Any) -> str:
+    replacements = {"response_style": _template("shared/response_style.md"), **values}
+    text = _template(relative_path)
+    for key, value in replacements.items():
+        text = text.replace("{{" + key + "}}", str(value))
+    return text.strip()
+
+
+@lru_cache(maxsize=None)
+def _template(relative_path: str) -> str:
+    path = PROMPTS_DIR / relative_path
+    return path.read_text(encoding="utf-8")
+
+
+def _join(*parts: str) -> str:
+    return "\n\n".join(part.strip() for part in parts if part.strip())

@@ -6,8 +6,11 @@ from uuid import uuid4
 
 from src.auditor import audit_before_output, enforce_circuit_breaker
 from src import communication_gate
+from src.app_config import get_config
+from src.budget_manager import trace_budget_start
 from src.command_registry import handle_command
 from src.context_logger import save_chat_session
+from src.decision_record import save_decision_record
 from src.error_classifier import classify_error
 from src.master_router import route_intent
 from src.skills import load_skill
@@ -15,9 +18,6 @@ from src.state import AgentState, DisclosureRecord, PipelineStatus
 from src.session_lock import save_pending_action
 from src.sub_agent import intake_precheck, stage_one_request_skills, stage_two_decide
 from src.trace_logger import trace_state_event
-
-
-MAX_ROUTE_RETRIES = 3
 
 
 def run_pipeline(user_input: str, chat_id: str = "cli") -> AgentState:
@@ -28,7 +28,14 @@ def run_pipeline(user_input: str, chat_id: str = "cli") -> AgentState:
     """
 
     state = AgentState(user_input=user_input, chat_id=chat_id)
+    max_route_retries = get_config().router_max_route_retries()
     trace_state_event(state, "message_received", agent_role="master", metadata={"entrypoint": "pipeline"})
+    trace_budget_start(
+        trace_id=state.trace_id,
+        chat_id=state.chat_id,
+        framework_id=state.framework_id,
+        workflow="natural_language_pipeline",
+    )
 
     while True:
         # 1. Master 选择策略岛，并记录路由理由。
@@ -53,7 +60,7 @@ def run_pipeline(user_input: str, chat_id: str = "cli") -> AgentState:
         state = intake_precheck(state)
 
         if state.status == PipelineStatus.BOUNCED:
-            if state.route_attempts >= MAX_ROUTE_RETRIES:
+            if state.route_attempts >= max_route_retries:
                 # 路由熔断：避免路由器和子 Agent 无限来回弹。
                 state.append_error(
                     f"路由重试达到上限：{state.bounce_reason or 'unknown bounce reason'}"
@@ -68,6 +75,7 @@ def run_pipeline(user_input: str, chat_id: str = "cli") -> AgentState:
                     metadata={"route_attempts": state.route_attempts},
                 )
                 communication_gate.send(chat_id, "\n".join(state.errors))
+                _save_decision_state(state)
                 save_chat_session(state)
                 trace_state_event(state, "chat_session_saved", agent_role="context_logger")
                 return state
@@ -110,7 +118,28 @@ def run_pipeline(user_input: str, chat_id: str = "cli") -> AgentState:
                     chat_id,
                     f"正在加载数据：{request.skill_name}。原因：{request.reason}",
                 )
-                loaded_skill = load_skill(request.skill_name, request.arguments)
+                try:
+                    loaded_skill = load_skill(
+                        request.skill_name,
+                        request.arguments,
+                        framework_id=state.framework_id,
+                        agent_role="worker",
+                    )
+                except Exception as exc:
+                    _handle_pipeline_error(state, chat_id, exc)
+                    save_chat_session(state)
+                    trace_state_event(
+                        state,
+                        "skill_disclosure_failed",
+                        agent_role="main_pipeline",
+                        status="error",
+                        output_preview=state.final_answer,
+                        risk_flags=["skill_disclosure_failed"],
+                        error=str(exc),
+                    )
+                    trace_state_event(state, "chat_session_saved", agent_role="context_logger")
+                    _save_decision_state(state)
+                    return state
                 state.disclosed_data.append(
                     DisclosureRecord(
                         skill_name=request.skill_name,
@@ -175,11 +204,13 @@ def run_pipeline(user_input: str, chat_id: str = "cli") -> AgentState:
                 status=state.status.value,
                 output_preview=state.final_answer,
             )
+            _save_decision_state(state)
             save_chat_session(state)
             trace_state_event(state, "chat_session_saved", agent_role="context_logger")
             return state
         except Exception as exc:
             _handle_pipeline_error(state, chat_id, exc)
+            _save_decision_state(state)
             save_chat_session(state)
             trace_state_event(
                 state,
@@ -231,6 +262,29 @@ def _handle_pipeline_error(state: AgentState, chat_id: str, exc: BaseException) 
         f"是否建议自动重试：{'是' if classified.retryable else '否'}"
     )
     communication_gate.send(chat_id, state.final_answer)
+
+
+def _save_decision_state(state: AgentState) -> None:
+    """Write Decision Record and trace the record path."""
+
+    try:
+        path = save_decision_record(state)
+    except Exception as exc:
+        trace_state_event(
+            state,
+            "decision_record_failed",
+            agent_role="decision_record",
+            status="error",
+            error=str(exc),
+            risk_flags=["decision_record_failed"],
+        )
+        return
+    trace_state_event(
+        state,
+        "decision_record_saved",
+        agent_role="decision_record",
+        metadata={"path": str(path)},
+    )
 
 
 def _decision_risk_flags(state: AgentState) -> list[str]:

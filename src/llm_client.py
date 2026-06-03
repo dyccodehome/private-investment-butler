@@ -214,6 +214,18 @@ class LLMClient:
             risk_flags=_llm_risk_flags(response, usage),
             metadata={"call_site": call_site},
         )
+        try:
+            from src.budget_manager import record_budget_usage
+
+            record_budget_usage(
+                trace_id=trace_id,
+                chat_id=chat_id,
+                framework_id=framework_id,
+                call_site=call_site,
+                token_usage=usage,
+            )
+        except Exception:
+            pass
         warning = build_token_warning(chat_id)
         if warning and chat_id:
             communication_gate.send(chat_id, warning)

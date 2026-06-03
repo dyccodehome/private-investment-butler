@@ -61,7 +61,14 @@ def save_user_action(
             verdict="WARN",
         )
     )
-    return save_chat_session(state)
+    path = save_chat_session(state)
+    try:
+        from src.decision_record import save_decision_record
+
+        save_decision_record(state)
+    except Exception:
+        pass
+    return path
 
 
 def _build_record(state: AgentState, timestamp: datetime) -> dict[str, Any]:
