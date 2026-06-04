@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from src import feishu_runtime
 from src.knowledge_absorber import PatchProposal
-from src.session_lock import save_pending_action
+from src.session_lock import pop_pending_action, release_processing, save_pending_action
 
 
 class FeishuRuntimeTest(unittest.TestCase):
@@ -82,6 +82,44 @@ class FeishuRuntimeTest(unittest.TestCase):
 
         callback.assert_called_once_with("discuss_constitution_patch", "cli", "Cash_Anchor", "PATCH-3")
 
+    def test_card_callback_accept_normalizes_old_sub_framework_pending_action(self) -> None:
+        save_pending_action(
+            chat_id="cli",
+            action_id="action-legacy-sub",
+            framework_id="Cash_Anchor/CN_Dividend_Income",
+            reason="PATCH-LEGACY",
+        )
+        with patch("src.feishu_runtime.accept_patch_proposal", return_value=Path("/tmp/archive.json")) as accept, patch(
+            "src.feishu_runtime.communication_gate.send"
+        ):
+            result = feishu_runtime.handle_feishu_card_callback(
+                {"chat_id": "cli", "action": "accept_constitution_patch", "state_id": "action-legacy-sub"},
+                async_run=False,
+            )
+
+        self.assertEqual(result, "callback received")
+        accept.assert_called_once_with("Cash_Anchor", "PATCH-LEGACY")
+
+    def test_failed_patch_callback_restores_pending_action_for_retry(self) -> None:
+        save_pending_action(
+            chat_id="cli",
+            action_id="action-retry",
+            framework_id="Cash_Anchor/CN_Dividend_Income",
+            reason="PATCH-RETRY",
+        )
+        with patch("src.feishu_runtime.accept_patch_proposal", side_effect=FileNotFoundError("missing")), patch(
+            "src.feishu_runtime.communication_gate.send"
+        ):
+            result = feishu_runtime.handle_feishu_card_callback(
+                {"chat_id": "cli", "action": "accept_constitution_patch", "state_id": "action-retry"},
+                async_run=False,
+            )
+
+        pending = pop_pending_action("action-retry")
+        self.assertEqual(result, "callback received")
+        self.assertIsNotNone(pending)
+        self.assertEqual(pending.framework_id, "Cash_Anchor")
+
     def test_absorb_background_stores_base_framework_for_sub_framework_target(self) -> None:
         proposal = PatchProposal(
             patch_id="PATCH-6",
@@ -101,6 +139,28 @@ class FeishuRuntimeTest(unittest.TestCase):
             )
 
         self.assertEqual(save_pending.call_args.kwargs["framework_id"], "Cash_Anchor")
+
+    def test_absorb_text_message_rejects_when_chat_is_busy(self) -> None:
+        chat_id = "cli-absorb-busy"
+        try:
+            with patch("src.feishu_runtime._submit_or_run") as submit, patch(
+                "src.feishu_runtime.communication_gate.send"
+            ) as send:
+                first = feishu_runtime.handle_feishu_text_message(
+                    chat_id,
+                    "/absorb Cash_Anchor/CN_Dividend_Income 高股息必须检查自由现金流",
+                )
+                second = feishu_runtime.handle_feishu_text_message(
+                    chat_id,
+                    "/absorb Cash_Anchor/CN_Dividend_Income 连续新知识",
+                )
+
+            self.assertEqual(first, "absorb received")
+            self.assertEqual(second, "busy")
+            submit.assert_called_once()
+            self.assertIn("已有任务", send.call_args.args[1])
+        finally:
+            release_processing(chat_id)
 
     def test_patch_callback_normalizes_sub_framework_target_before_accept(self) -> None:
         with patch("src.feishu_runtime.accept_patch_proposal", return_value=Path("/tmp/archive.json")) as accept, patch(

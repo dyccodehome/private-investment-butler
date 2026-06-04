@@ -21,9 +21,9 @@ from src.knowledge_absorber import (
     format_patch_proposal_for_user,
     mark_patch_proposal,
     parse_absorb_args,
-    resolve_absorb_target,
     run_knowledge_absorption,
     start_patch_discussion,
+    storage_framework_id,
 )
 from src.session_lock import (
     acquire_processing,
@@ -53,6 +53,28 @@ def handle_feishu_text_message(chat_id: str, text: str, *, async_run: bool = Tru
         except ValueError as exc:
             communication_gate.send(chat_id, str(exc))
             return "absorb usage error"
+        if not acquire_processing(chat_id):
+            trace_event(
+                trace_id=None,
+                event_type="session_lock_rejected",
+                chat_id=chat_id,
+                framework_id=framework_id,
+                agent_role="feishu_runtime",
+                status="busy",
+                input_preview=text,
+                risk_flags=["session_busy"],
+            )
+            communication_gate.send(chat_id, "当前会话已有任务在处理中，请等待完成后再发送新请求。")
+            return "busy"
+        trace_event(
+            trace_id=None,
+            event_type="session_lock_acquired",
+            chat_id=chat_id,
+            framework_id=framework_id,
+            agent_role="feishu_runtime",
+            input_preview=text,
+            metadata={"entrypoint": "absorb"},
+        )
         communication_gate.send(
             chat_id,
             "已收到新知识，正在分析是否需要修改框架。完成后会发送确认卡片。",
@@ -130,7 +152,13 @@ def _process_card_callback_background(action: str, pending: Any, state_id: str) 
             input_preview=action,
             metadata={"state_id": state_id, "patch_id": pending.reason},
         )
-        _handle_patch_callback(action, pending.chat_id, pending.framework_id, pending.reason)
+        if not _handle_patch_callback(action, pending.chat_id, pending.framework_id, pending.reason):
+            save_pending_action(
+                chat_id=pending.chat_id,
+                action_id=state_id,
+                framework_id=_storage_framework_id(pending.framework_id),
+                reason=pending.reason,
+            )
     elif action == "force_execute":
         trace_event(
             trace_id=None,
@@ -204,38 +232,43 @@ def _run_agent_background(chat_id: str, text: str) -> None:
 def _run_absorb_background(chat_id: str, framework_id: str, source_text: str) -> None:
     """后台运行宪法再造管道并推送审批卡片。"""
 
-    proposal = run_knowledge_absorption(framework_id, source_text, chat_id=chat_id)
-    text = format_patch_proposal_for_user(proposal)
-    if proposal.status != "proposed":
-        communication_gate.send(chat_id, text)
-        return
+    try:
+        proposal = run_knowledge_absorption(framework_id, source_text, chat_id=chat_id)
+        text = format_patch_proposal_for_user(proposal)
+        if proposal.status != "proposed":
+            communication_gate.send(chat_id, text)
+            return
 
-    action_id = str(uuid4())
-    save_pending_action(
-        chat_id=chat_id,
-        action_id=action_id,
-        framework_id=_storage_framework_id(proposal.framework_id or framework_id),
-        reason=proposal.patch_id,
-    )
-    communication_gate.send_card(
-        chat_id,
-        f"宪法进化提案 {proposal.patch_id}",
-        text,
-        [
-            {"label": "同意并打入宪法", "action": "accept_constitution_patch", "type": "primary", "state_id": action_id},
-            {"label": "继续讨论", "action": "discuss_constitution_patch", "type": "default", "state_id": action_id},
-            {"label": "拒绝修改", "action": "reject_constitution_patch", "type": "danger", "state_id": action_id},
-        ],
-    )
+        action_id = str(uuid4())
+        save_pending_action(
+            chat_id=chat_id,
+            action_id=action_id,
+            framework_id=_storage_framework_id(proposal.framework_id or framework_id),
+            reason=proposal.patch_id,
+        )
+        communication_gate.send_card(
+            chat_id,
+            f"宪法进化提案 {proposal.patch_id}",
+            text,
+            [
+                {"label": "同意并打入宪法", "action": "accept_constitution_patch", "type": "primary", "state_id": action_id},
+                {"label": "继续讨论", "action": "discuss_constitution_patch", "type": "default", "state_id": action_id},
+                {"label": "拒绝修改", "action": "reject_constitution_patch", "type": "danger", "state_id": action_id},
+            ],
+        )
+    except Exception as exc:
+        communication_gate.send(chat_id, f"知识吸收执行失败：{exc}")
+    finally:
+        release_processing(chat_id)
 
 
-def _handle_patch_callback(action: str, chat_id: str, framework_id: str | None, patch_id: str) -> None:
+def _handle_patch_callback(action: str, chat_id: str, framework_id: str | None, patch_id: str) -> bool:
     """处理宪法补丁审批按钮。"""
 
     storage_framework_id = _storage_framework_id(framework_id)
     if not storage_framework_id:
         communication_gate.send(chat_id, "补丁审批失败：缺少 framework_id。")
-        return
+        return False
     try:
         if action == "accept_constitution_patch":
             archive_path = accept_patch_proposal(storage_framework_id, patch_id)
@@ -255,8 +288,10 @@ def _handle_patch_callback(action: str, chat_id: str, framework_id: str | None, 
             archive_path = mark_patch_proposal(storage_framework_id, patch_id, "rejected")
             clear_patch_discussion(chat_id)
             communication_gate.send(chat_id, f"已拒绝该宪法补丁：{patch_id}\n归档：{archive_path}")
+        return True
     except Exception as exc:
         communication_gate.send(chat_id, f"补丁审批执行失败：{exc}")
+        return False
 
 
 def _handle_patch_discussion_text(chat_id: str, framework_id: str | None, patch_id: str, text: str) -> str:
@@ -318,7 +353,4 @@ def _storage_framework_id(framework_id: str | None) -> str | None:
 
     if not framework_id:
         return None
-    try:
-        return resolve_absorb_target(framework_id)["framework_id"]
-    except ValueError:
-        return framework_id
+    return storage_framework_id(framework_id)

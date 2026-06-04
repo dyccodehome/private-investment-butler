@@ -174,6 +174,7 @@ def run_knowledge_absorption(framework_id: str, source_text: str, chat_id: str |
 def save_patch_proposal(proposal: PatchProposal) -> Path:
     """保存 patch proposal 到目标策略岛。"""
 
+    proposal.framework_id = storage_framework_id(proposal.framework_id)
     path = patch_proposal_path(proposal.framework_id, proposal.patch_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(asdict(proposal), ensure_ascii=False, indent=2), encoding="utf-8")
@@ -195,11 +196,12 @@ def accept_patch_proposal(framework_id: str, patch_id: str) -> Path:
     如果旧片段不存在，拒绝静默写入，避免误改宪法。
     """
 
-    proposal = load_patch_proposal(framework_id, patch_id)
+    requested_framework_id = framework_id
+    proposal = load_patch_proposal(storage_framework_id(framework_id), patch_id)
     if not proposal.target_section or not proposal.patch_markdown:
         raise ValueError("proposal 缺少 target_section 或 patch_markdown，不能自动打入宪法。")
 
-    target_id = proposal.target_id or framework_id
+    target_id = proposal.target_id or requested_framework_id
     constitution_path = target_constitution_path(target_id)
     if not _git_path_is_clean(constitution_path):
         raise RuntimeError(
@@ -218,7 +220,7 @@ def accept_patch_proposal(framework_id: str, patch_id: str) -> Path:
 def mark_patch_proposal(framework_id: str, patch_id: str, status: Literal["rejected"]) -> Path:
     """把 proposal 标记为拒绝，并移动到归档区。"""
 
-    proposal = load_patch_proposal(framework_id, patch_id)
+    proposal = load_patch_proposal(storage_framework_id(framework_id), patch_id)
     proposal.status = status
     proposal.human_decision = status
     proposal.updated_at = _now()
@@ -229,7 +231,7 @@ def mark_patch_proposal(framework_id: str, patch_id: str, status: Literal["rejec
 def start_patch_discussion(framework_id: str, patch_id: str) -> PatchProposal:
     """把 proposal 标记为讨论中，但不归档。"""
 
-    proposal = load_patch_proposal(framework_id, patch_id)
+    proposal = load_patch_proposal(storage_framework_id(framework_id), patch_id)
     proposal.status = "discussing"
     proposal.human_decision = "discussing"
     proposal.updated_at = _now()
@@ -247,7 +249,7 @@ def start_patch_discussion(framework_id: str, patch_id: str) -> PatchProposal:
 def append_patch_discussion(framework_id: str, patch_id: str, role: str, content: str) -> PatchProposal:
     """追加一次补丁讨论记录。"""
 
-    proposal = load_patch_proposal(framework_id, patch_id)
+    proposal = load_patch_proposal(storage_framework_id(framework_id), patch_id)
     proposal.status = "discussing"
     proposal.human_decision = "discussing"
     proposal.updated_at = _now()
@@ -265,6 +267,7 @@ def append_patch_discussion(framework_id: str, patch_id: str, role: str, content
 def archive_patch_proposal(proposal: PatchProposal) -> Path:
     """把 proposal 从待审批目录复制到归档目录。"""
 
+    proposal.framework_id = storage_framework_id(proposal.framework_id)
     archive_path = (
         FRAMEWORKS_DIR
         / proposal.framework_id
@@ -277,7 +280,7 @@ def archive_patch_proposal(proposal: PatchProposal) -> Path:
 
 
 def patch_proposal_path(framework_id: str, patch_id: str) -> Path:
-    return FRAMEWORKS_DIR / framework_id / "patch_proposals" / f"{patch_id}.json"
+    return FRAMEWORKS_DIR / storage_framework_id(framework_id) / "patch_proposals" / f"{patch_id}.json"
 
 
 def format_patch_proposal_for_user(proposal: PatchProposal) -> str:
@@ -386,6 +389,7 @@ def _extract_json_object(raw: str) -> dict[str, Any]:
 
 
 def _save_knowledge_inbox(framework_id: str, patch_id: str, source_text: str, target_id: str | None = None) -> Path:
+    framework_id = storage_framework_id(framework_id)
     path = FRAMEWORKS_DIR / framework_id / "knowledge_inbox" / f"{patch_id}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     record = {
@@ -422,6 +426,13 @@ def resolve_absorb_target(target_id: str) -> dict[str, str]:
         "target_file": target_file,
         "target_name": target_name,
     }
+
+
+def storage_framework_id(framework_id: str) -> str:
+    """Return the strategy-island directory for a root or sub-framework id."""
+
+    target = ABSORB_TARGETS.get(framework_id)
+    return target[0] if target else framework_id
 
 
 def target_constitution_path(target_id: str) -> Path:

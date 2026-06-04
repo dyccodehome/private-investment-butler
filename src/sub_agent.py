@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
+from src.data_quality import summarize_disclosures
 from src.init import FRAMEWORKS_DIR
 from src.llm_client import LLMClient
 from src.prompts import worker_system_prompt, worker_user_prompt
@@ -335,15 +338,286 @@ def _read_context_file(path: Path) -> str:
 
 
 def _compact_disclosed_data_for_prompt(state: AgentState) -> str:
-    """只把压缩后的披露元数据传给模型提示词。"""
+    """只把压缩后的披露事实传给模型提示词。"""
 
-    compact = []
+    disclosures = []
     for item in state.disclosed_data:
-        compact.append(
+        disclosures.append(
             {
                 "skill_name": item.skill_name,
                 "arguments": item.arguments,
-                "payload": item.payload,
+                "result": _compact_skill_payload(item.skill_name, item.payload),
             }
         )
-    return str(compact)
+    return json.dumps(
+        {
+            "data_quality_summary": summarize_disclosures(state.disclosed_data),
+            "disclosures": disclosures,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def _compact_skill_payload(skill_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Convert a loaded Skill payload into a bounded prompt-facing summary."""
+
+    result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+    if not result:
+        return {
+            "payload_keys": sorted(payload.keys()),
+            "payload_preview": _compact_text(str(payload), 800),
+        }
+
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    return {
+        "status": result.get("status"),
+        "source": result.get("source"),
+        "data_type": result.get("data_type"),
+        "freshness": result.get("freshness"),
+        "warnings": result.get("warnings") or [],
+        "error": _compact_text(str(result.get("error") or ""), 300),
+        "data_quality": _compact_data_quality(result.get("data_quality")),
+        "facts": _compact_skill_data(skill_name, data),
+    }
+
+
+def _compact_skill_data(skill_name: str, data: dict[str, Any]) -> dict[str, Any]:
+    if skill_name == "portfolio_snapshot":
+        return _compact_portfolio_snapshot(data)
+    if skill_name in {"news-search", "announcement-search"}:
+        return _compact_search_results(data)
+    if skill_name == "trade_history":
+        return {
+            "symbol": data.get("symbol"),
+            "framework_id": data.get("framework_id"),
+            "match_count": data.get("match_count"),
+            "matches": _limit_dict_list(data.get("matches"), 5),
+        }
+    if skill_name == "research_dossier":
+        return _truncate_nested(data, max_string=500, max_items=8)
+    if skill_name in {"hithink-market-query", "hithink-finance-query", "hithink-basicinfo-query"}:
+        payload = data.get("payload") if isinstance(data.get("payload"), dict) else data
+        return _compact_market_payload(payload)
+    return _truncate_nested(data, max_string=500, max_items=8)
+
+
+def _compact_portfolio_snapshot(data: dict[str, Any]) -> dict[str, Any]:
+    dividend = data.get("dividend_analysis") if isinstance(data.get("dividend_analysis"), dict) else {}
+    current_year = dividend.get("current_year_received") if isinstance(dividend.get("current_year_received"), dict) else {}
+    forecast = dividend.get("forecast_from_holdings") if isinstance(dividend.get("forecast_from_holdings"), dict) else {}
+    us_forecast = (
+        dividend.get("us_income_distribution_forecast")
+        if isinstance(dividend.get("us_income_distribution_forecast"), dict)
+        else {}
+    )
+    yield_estimate = (
+        dividend.get("portfolio_dividend_yield_estimate")
+        if isinstance(dividend.get("portfolio_dividend_yield_estimate"), dict)
+        else {}
+    )
+    return {
+        "as_of": data.get("as_of"),
+        "plan": _pick(data.get("plan"), "plan_name", "base_year", "retirement_years", "annual_contribution_target", "currency"),
+        "summary": data.get("summary") if isinstance(data.get("summary"), dict) else {},
+        "dividend_analysis": {
+            "status": dividend.get("status"),
+            "basis": dividend.get("basis"),
+            "forecast_from_holdings": {
+                "gross_annual_dividend_by_currency": forecast.get("gross_annual_dividend_by_currency"),
+                "net_annual_dividend_by_currency": forecast.get("net_annual_dividend_by_currency"),
+                "filled_position_count": forecast.get("filled_position_count"),
+                "missing_position_count": forecast.get("missing_position_count"),
+                "missing_annual_dividend_positions": _compact_identity_list(
+                    forecast.get("missing_annual_dividend_positions")
+                ),
+            },
+            "current_year_received": _pick(
+                current_year,
+                "year",
+                "event_count",
+                "total_by_currency",
+                "plan_currency",
+                "plan_currency_amount",
+                "by_symbol",
+            ),
+            "us_income_distribution_forecast": {
+                "policy": us_forecast.get("policy"),
+                "position_count": len(us_forecast.get("positions") or []),
+                "estimated_annual_cash_by_currency": us_forecast.get("estimated_annual_cash_by_currency"),
+            },
+            "portfolio_dividend_yield_estimate": _pick(
+                yield_estimate,
+                "policy",
+                "by_market",
+                "by_currency",
+                "portfolio_total",
+                "missing_positions",
+            ),
+            "answer_constraints": dividend.get("answer_constraints") or [],
+            "repair_actions": dividend.get("repair_actions") or [],
+        },
+        "positions": [_compact_position(item) for item in _as_list(data.get("positions"))[:20]],
+        "market_breakdown": data.get("market_breakdown") if isinstance(data.get("market_breakdown"), dict) else {},
+        "currency_breakdown": _pick(
+            data.get("currency_breakdown"),
+            "is_mixed_currency",
+            "position_totals_by_currency",
+            "dividend_events_by_currency",
+        ),
+        "market_data_summary": _compact_market_data_summary(data.get("market_data_summary")),
+        "exchange_rates": _truncate_nested(data.get("exchange_rates"), max_string=240, max_items=10),
+        "data_quality": data.get("data_quality") if isinstance(data.get("data_quality"), dict) else {},
+        "market_data_policy": data.get("market_data_policy") if isinstance(data.get("market_data_policy"), dict) else {},
+    }
+
+
+def _compact_position(position: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "symbol": position.get("symbol"),
+        "name": position.get("name"),
+        "market": position.get("market"),
+        "currency": position.get("currency"),
+        "shares": position.get("shares"),
+        "annual_dividend_per_share": position.get("annual_dividend_per_share"),
+        "gross_annual_dividend": position.get("gross_annual_dividend"),
+        "net_annual_dividend": position.get("net_annual_dividend"),
+        "yield_on_cost": position.get("yield_on_cost"),
+        "net_yield_on_cost": position.get("net_yield_on_cost"),
+        "notes": _compact_text(str(position.get("notes") or ""), 160),
+    }
+
+
+def _compact_search_results(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "query": data.get("query"),
+        "item_count": len(data.get("items") or []),
+        "items": [
+            {
+                "title": _compact_text(str(item.get("title") or ""), 160),
+                "summary": _compact_text(str(item.get("summary") or ""), 220),
+                "source": item.get("source"),
+                "published_at": item.get("published_at"),
+                "url": item.get("url"),
+                "cash_dividend_per_share": item.get("cash_dividend_per_share"),
+            }
+            for item in _as_list(data.get("items"))[:5]
+        ],
+    }
+
+
+def _compact_market_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "symbol": payload.get("symbol") or payload.get("stock_code"),
+        "market": payload.get("market"),
+        "name": payload.get("name") or payload.get("stock_name"),
+        "quote": _pick(payload.get("quote"), "price", "current", "change", "pct_change", "volume", "amount"),
+        "technical": _pick(payload.get("technical"), "ma20", "ma60", "ma120", "trend"),
+        "market_phase": payload.get("market_phase") if isinstance(payload.get("market_phase"), dict) else {},
+        "data_quality": payload.get("data_quality") if isinstance(payload.get("data_quality"), dict) else {},
+        "source_chain": payload.get("source_chain") if isinstance(payload.get("source_chain"), list) else [],
+    }
+
+
+def _compact_data_quality(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    pending_quote = _compact_identity_list(value.get("pending_quote_symbols"))
+    missing_dividend = _compact_identity_list(value.get("missing_annual_dividend_symbols"))
+    compact = {
+        "status": value.get("status"),
+        "coverage": value.get("coverage") if isinstance(value.get("coverage"), dict) else {},
+        "freshness": value.get("freshness"),
+        "limitations": _compact_text_list(value.get("limitations"), limit=6, chars=220),
+        "warnings": _compact_text_list(value.get("warnings"), limit=6, chars=220),
+        "pending_quote_count": len(pending_quote),
+        "pending_quote_symbols": [item.get("symbol") for item in pending_quote if item.get("symbol")],
+        "missing_annual_dividend_count": len(missing_dividend),
+        "missing_annual_dividend_symbols": [
+            item.get("symbol") for item in missing_dividend if item.get("symbol")
+        ],
+        "duplicate_symbol_groups": value.get("duplicate_symbol_groups") or [],
+        "position_currencies": value.get("position_currencies") or [],
+        "current_year_dividend_event_count": value.get("current_year_dividend_event_count"),
+    }
+    market_data = _compact_market_data_summary(value.get("market_data"))
+    if market_data:
+        compact["market_data"] = market_data
+    return {key: item for key, item in compact.items() if item not in (None, "", [], {})}
+
+
+def _compact_market_data_summary(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    error_symbols = []
+    for item in _as_list(value.get("error_symbols"))[:20]:
+        symbol = item.get("symbol")
+        if symbol:
+            error_symbols.append(symbol)
+    return {
+        "status_counts": value.get("status_counts") if isinstance(value.get("status_counts"), dict) else {},
+        "error_symbols": error_symbols,
+        "quote_missing_symbols": _as_text_list(value.get("quote_missing_symbols"), limit=20),
+        "dividend_fields_ignored_symbols": _as_text_list(
+            value.get("dividend_fields_ignored_symbols"),
+            limit=20,
+        ),
+        "quote_dependent_metrics": _as_text_list(value.get("quote_dependent_metrics"), limit=8),
+        "ledger_dependent_metrics": _as_text_list(value.get("ledger_dependent_metrics"), limit=8),
+    }
+
+
+def _pick(value: Any, *keys: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {key: value.get(key) for key in keys if key in value}
+
+
+def _limit_dict_list(value: Any, limit: int) -> list[dict[str, Any]]:
+    return [
+        _truncate_nested(item, max_string=240, max_items=8)
+        for item in _as_list(value)[:limit]
+    ]
+
+
+def _compact_identity_list(value: Any) -> list[dict[str, Any]]:
+    return [
+        _pick(item, "symbol", "name", "market", "currency", "shares")
+        for item in _as_list(value)[:20]
+    ]
+
+
+def _compact_text_list(value: Any, *, limit: int, chars: int) -> list[str]:
+    return [_compact_text(item, chars) for item in _as_text_list(value, limit=limit)]
+
+
+def _as_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _as_text_list(value: Any, *, limit: int) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value[:limit] if str(item).strip()]
+
+
+def _truncate_nested(value: Any, *, max_string: int, max_items: int) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _truncate_nested(child, max_string=max_string, max_items=max_items)
+            for key, child in list(value.items())[:max_items]
+        }
+    if isinstance(value, list):
+        return [_truncate_nested(item, max_string=max_string, max_items=max_items) for item in value[:max_items]]
+    if isinstance(value, str):
+        return _compact_text(value, max_string)
+    return value
+
+
+def _compact_text(text: str, limit: int) -> str:
+    clean = " ".join(text.strip().split())
+    if len(clean) <= limit:
+        return clean
+    return clean[:limit] + "...[truncated]"
