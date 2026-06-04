@@ -100,6 +100,24 @@ class FeishuRuntimeTest(unittest.TestCase):
         self.assertEqual(result, "callback received")
         accept.assert_called_once_with("Cash_Anchor", "PATCH-LEGACY")
 
+    def test_card_callback_can_fallback_to_patch_payload_when_pending_is_missing(self) -> None:
+        with patch("src.feishu_runtime.accept_patch_proposal", return_value=Path("/tmp/archive.json")) as accept, patch(
+            "src.feishu_runtime.communication_gate.send"
+        ):
+            result = feishu_runtime.handle_feishu_card_callback(
+                {
+                    "chat_id": "cli",
+                    "action": "accept_constitution_patch",
+                    "state_id": "state-without-memory",
+                    "framework_id": "Cash_Anchor/CN_Dividend_Income",
+                    "patch_id": "PATCH-FALLBACK",
+                },
+                async_run=False,
+            )
+
+        self.assertEqual(result, "callback received")
+        accept.assert_called_once_with("Cash_Anchor", "PATCH-FALLBACK")
+
     def test_failed_patch_callback_restores_pending_action_for_retry(self) -> None:
         save_pending_action(
             chat_id="cli",

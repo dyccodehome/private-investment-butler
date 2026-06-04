@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 from concurrent.futures import ThreadPoolExecutor
+from time import time
 from typing import Any
 from uuid import uuid4
 
@@ -26,6 +27,7 @@ from src.knowledge_absorber import (
     storage_framework_id,
 )
 from src.session_lock import (
+    PendingAction,
     acquire_processing,
     clear_patch_discussion,
     get_patch_discussion,
@@ -130,6 +132,8 @@ def handle_feishu_card_callback(value: dict[str, Any], *, async_run: bool = True
     state_id = str(value.get("state_id") or "")
 
     pending = pop_pending_action(state_id)
+    if not pending:
+        pending = _fallback_patch_pending_action(value, chat_id, action, state_id)
     if not pending:
         if chat_id:
             communication_gate.send(chat_id, "该确认请求已过期或已处理。")
@@ -251,9 +255,30 @@ def _run_absorb_background(chat_id: str, framework_id: str, source_text: str) ->
             f"宪法进化提案 {proposal.patch_id}",
             text,
             [
-                {"label": "同意并打入宪法", "action": "accept_constitution_patch", "type": "primary", "state_id": action_id},
-                {"label": "继续讨论", "action": "discuss_constitution_patch", "type": "default", "state_id": action_id},
-                {"label": "拒绝修改", "action": "reject_constitution_patch", "type": "danger", "state_id": action_id},
+                {
+                    "label": "同意并打入宪法",
+                    "action": "accept_constitution_patch",
+                    "type": "primary",
+                    "state_id": action_id,
+                    "framework_id": _storage_framework_id(proposal.framework_id or framework_id),
+                    "patch_id": proposal.patch_id,
+                },
+                {
+                    "label": "继续讨论",
+                    "action": "discuss_constitution_patch",
+                    "type": "default",
+                    "state_id": action_id,
+                    "framework_id": _storage_framework_id(proposal.framework_id or framework_id),
+                    "patch_id": proposal.patch_id,
+                },
+                {
+                    "label": "拒绝修改",
+                    "action": "reject_constitution_patch",
+                    "type": "danger",
+                    "state_id": action_id,
+                    "framework_id": _storage_framework_id(proposal.framework_id or framework_id),
+                    "patch_id": proposal.patch_id,
+                },
             ],
         )
     except Exception as exc:
@@ -354,3 +379,24 @@ def _storage_framework_id(framework_id: str | None) -> str | None:
     if not framework_id:
         return None
     return storage_framework_id(framework_id)
+
+
+def _fallback_patch_pending_action(
+    value: dict[str, Any],
+    chat_id: str,
+    action: str,
+    state_id: str,
+) -> PendingAction | None:
+    if action not in {"accept_constitution_patch", "discuss_constitution_patch", "reject_constitution_patch"}:
+        return None
+    framework_id = _storage_framework_id(str(value.get("framework_id") or ""))
+    patch_id = str(value.get("patch_id") or "")
+    if not chat_id or not framework_id or not patch_id:
+        return None
+    return PendingAction(
+        chat_id=chat_id,
+        action_id=state_id,
+        framework_id=framework_id,
+        reason=patch_id,
+        created_at=time(),
+    )

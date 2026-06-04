@@ -11,7 +11,16 @@ class CommunicationGateTest(unittest.TestCase):
             "chat-1",
             "测试卡片",
             "正文",
-            [{"label": "同意", "action": "accept_constitution_patch", "type": "primary", "state_id": "state-1"}],
+            [
+                {
+                    "label": "同意",
+                    "action": "accept_constitution_patch",
+                    "type": "primary",
+                    "state_id": "state-1",
+                    "framework_id": "Cash_Anchor",
+                    "patch_id": "CASH-1",
+                }
+            ],
         )
 
         button = card["elements"][1]["actions"][0]
@@ -19,6 +28,8 @@ class CommunicationGateTest(unittest.TestCase):
             "chat_id": "chat-1",
             "action": "accept_constitution_patch",
             "state_id": "state-1",
+            "framework_id": "Cash_Anchor",
+            "patch_id": "CASH-1",
         }
 
         self.assertEqual(button["value"], expected_value)

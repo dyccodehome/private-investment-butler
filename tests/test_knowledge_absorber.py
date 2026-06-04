@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from src.knowledge_absorber import (
     PatchProposal,
+    accept_patch_proposal,
     load_patch_proposal,
     parse_absorb_args,
     patch_proposal_path,
@@ -69,6 +70,35 @@ class KnowledgeAbsorberTest(unittest.TestCase):
 
         self.assertEqual(path, frameworks / "Cash_Anchor" / "patch_proposals" / "CASH-TEST.json")
         self.assertEqual(loaded.framework_id, "Cash_Anchor")
+
+    def test_accept_patch_proposal_can_insert_after_exact_anchor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            frameworks = Path(tmp) / "frameworks"
+            target = frameworks / "Cash_Anchor" / "sub_frameworks" / "CN_Dividend_Income.md"
+            target.parent.mkdir(parents=True)
+            anchor = "### 9.3 基本面退出\n\n- 经营现金流连续恶化"
+            target.write_text(anchor + "\n\n---\n", encoding="utf-8")
+            proposal = PatchProposal(
+                patch_id="CASH-INSERT",
+                framework_id="Cash_Anchor",
+                target_id="Cash_Anchor/CN_Dividend_Income",
+                target_file="sub_frameworks/CN_Dividend_Income.md",
+                patch_operation="insert_after",
+                target_section=anchor,
+                patch_markdown="**新增规则**\n\n连续两期恶化时降级观察。",
+            )
+
+            with patch("src.knowledge_absorber.FRAMEWORKS_DIR", frameworks), patch(
+                "src.knowledge_absorber._git_path_is_clean",
+                return_value=True,
+            ), patch("src.knowledge_absorber._git_commit_path"):
+                save_patch_proposal(proposal)
+                archive_path = accept_patch_proposal("Cash_Anchor/CN_Dividend_Income", "CASH-INSERT")
+
+            content = target.read_text(encoding="utf-8")
+
+        self.assertIn(anchor + "\n\n**新增规则**", content)
+        self.assertTrue(str(archive_path).endswith("CASH-INSERT-accepted.json"))
 
 
 if __name__ == "__main__":

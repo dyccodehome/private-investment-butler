@@ -65,7 +65,7 @@ def _build_post_content(text: str, title: str = "") -> dict[str, Any]:
     }
 
 
-def send_card(chat_id: str, title: str, text: str, actions: list[dict[str, str]]) -> None:
+def send_card(chat_id: str, title: str, text: str, actions: list[dict[str, Any]]) -> None:
     """推送带动作按钮的飞书交互卡片。"""
 
     if chat_id == "cli":
@@ -89,7 +89,7 @@ def send_card(chat_id: str, title: str, text: str, actions: list[dict[str, str]]
     print(f"[{chat_id}] {title}\n{text}\nActions: {action_labels}")
 
 
-def _build_interactive_card(chat_id: str, title: str, text: str, actions: list[dict[str, str]]) -> dict[str, Any]:
+def _build_interactive_card(chat_id: str, title: str, text: str, actions: list[dict[str, Any]]) -> dict[str, Any]:
     """构造飞书交互卡片 JSON。"""
 
     return {
@@ -107,19 +107,11 @@ def _build_interactive_card(chat_id: str, title: str, text: str, actions: list[d
                         "tag": "button",
                         "text": {"tag": "plain_text", "content": action["label"]},
                         "type": action.get("type", "default"),
-                        "value": {
-                            "chat_id": chat_id,
-                            "action": action["action"],
-                            "state_id": action.get("state_id", ""),
-                        },
+                        "value": _button_value(chat_id, action),
                         "behaviors": [
                             {
                                 "type": "callback",
-                                "value": {
-                                    "chat_id": chat_id,
-                                    "action": action["action"],
-                                    "state_id": action.get("state_id", ""),
-                                },
+                                "value": _button_value(chat_id, action),
                             }
                         ],
                     }
@@ -128,6 +120,18 @@ def _build_interactive_card(chat_id: str, title: str, text: str, actions: list[d
             },
         ],
     }
+
+
+def _button_value(chat_id: str, action: dict[str, Any]) -> dict[str, Any]:
+    value = {
+        "chat_id": chat_id,
+        "action": action["action"],
+        "state_id": action.get("state_id", ""),
+    }
+    for key in ("framework_id", "patch_id"):
+        if action.get(key):
+            value[key] = action[key]
+    return value
 
 
 def _post_feishu_openapi_message(

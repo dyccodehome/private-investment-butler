@@ -65,6 +65,7 @@ class PatchProposal:
     extracted_principles: list[str] = field(default_factory=list)
     applicability: dict[str, Any] = field(default_factory=dict)
     conflict_type: Literal["supplement", "refine", "conflict", "reject"] = "supplement"
+    patch_operation: Literal["replace", "insert_after"] = "replace"
     target_section: str = ""
     old_problem: str = ""
     patch_markdown: str = ""
@@ -192,8 +193,9 @@ def load_patch_proposal(framework_id: str, patch_id: str) -> PatchProposal:
 def accept_patch_proposal(framework_id: str, patch_id: str) -> Path:
     """把已审批补丁打入 constitution.md，并归档 proposal。
 
-    当前采用精确替换：proposal 必须提供 `target_section` 中的旧片段。
-    如果旧片段不存在，拒绝静默写入，避免误改宪法。
+    proposal 必须提供目标文件里的精确锚点。支持两种操作：
+    - replace：用 `patch_markdown` 替换 `target_section`
+    - insert_after：在 `target_section` 后插入 `patch_markdown`
     """
 
     requested_framework_id = framework_id
@@ -207,7 +209,12 @@ def accept_patch_proposal(framework_id: str, patch_id: str) -> Path:
         raise RuntimeError(
             f"{constitution_path} 存在未提交改动。为避免混入人工草稿，请先手动提交或整理后再打补丁。"
         )
-    patch_markdown(constitution_path, proposal.target_section, proposal.patch_markdown)
+    _apply_patch_markdown(
+        constitution_path,
+        operation=proposal.patch_operation,
+        target_section=proposal.target_section,
+        patch_content=proposal.patch_markdown,
+    )
     proposal.status = "accepted"
     proposal.human_decision = "accepted"
     proposal.updated_at = _now()
@@ -353,6 +360,7 @@ def _proposal_from_llm_json(
     data = _extract_json_object(raw)
     conflict_type = data.get("conflict_type") if data.get("conflict_type") in {"supplement", "refine", "conflict", "reject"} else "supplement"
     risk_level = data.get("risk_level") if data.get("risk_level") in {"low", "medium", "high"} else "medium"
+    patch_operation = data.get("patch_operation") if data.get("patch_operation") in {"replace", "insert_after"} else "replace"
     status = "rejected" if conflict_type == "reject" else "proposed"
     return PatchProposal(
         patch_id=patch_id,
@@ -365,6 +373,7 @@ def _proposal_from_llm_json(
         extracted_principles=[str(item) for item in data.get("extracted_principles") or []],
         applicability=dict(data.get("applicability") or {}),
         conflict_type=conflict_type,
+        patch_operation=patch_operation,
         target_section=str(data.get("target_section") or ""),
         old_problem=str(data.get("old_problem") or ""),
         patch_markdown=str(data.get("patch_markdown") or ""),
@@ -438,6 +447,26 @@ def storage_framework_id(framework_id: str) -> str:
 def target_constitution_path(target_id: str) -> Path:
     target = resolve_absorb_target(target_id)
     return FRAMEWORKS_DIR / target["framework_id"] / target["target_file"]
+
+
+def _apply_patch_markdown(
+    path: Path,
+    *,
+    operation: str,
+    target_section: str,
+    patch_content: str,
+) -> None:
+    if operation == "insert_after":
+        anchor = target_section.rstrip()
+        patch_text = patch_content.strip()
+        if not anchor or not patch_text:
+            raise ValueError("insert_after proposal 缺少 target_section 或 patch_markdown。")
+        patch_markdown(path, anchor, f"{anchor}\n\n{patch_text}")
+        return
+    if operation == "replace":
+        patch_markdown(path, target_section, patch_content)
+        return
+    raise ValueError(f"不支持的 patch_operation：{operation}")
 
 
 def _compact_text(text: str, limit: int) -> str:
