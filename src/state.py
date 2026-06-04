@@ -68,6 +68,8 @@ class AgentState:
     disclosed_data: list[DisclosureRecord] = field(default_factory=list)
     worker_notes: list[str] = field(default_factory=list)
     draft_decision: str | None = None
+    output_contract: dict[str, Any] = field(default_factory=dict)
+    decision_snapshot: dict[str, Any] = field(default_factory=dict)
     audit_persona: str | None = None
     audit_log: list[DebateEntry] = field(default_factory=list)
     audit_signal: Literal["PASS", "WARN", "REJECT"] | None = None

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 import tempfile
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
@@ -133,6 +134,167 @@ class LongbridgeProviderTest(unittest.TestCase):
         self.assertEqual(quotes[0].current_price, 56.99)
         self.assertEqual(quotes[0].quote_source, "pre_market_quote")
 
+    def test_parse_cash_flow_filters_dividend_income(self) -> None:
+        payload = {
+            "code": 0,
+            "data": {
+                "list": [
+                    {
+                        "transaction_flow_name": "Dividend",
+                        "direction": "2",
+                        "balance": "12.34",
+                        "currency": "USD",
+                        "business_time": "2026-05-29",
+                        "symbol": "QQQI.US",
+                        "description": "QQQI distribution",
+                    },
+                    {
+                        "transaction_flow_name": "BuyContract-Stocks",
+                        "direction": "1",
+                        "balance": "-100",
+                        "currency": "USD",
+                        "business_time": "2026-05-29",
+                        "symbol": "QQQI.US",
+                    },
+                ]
+            },
+        }
+
+        flows = longbridge_provider.parse_longbridge_cash_flows(payload)
+        dividends = longbridge_provider.filter_dividend_cash_flows(flows, ["QQQI.US"])
+
+        self.assertEqual(len(dividends), 1)
+        self.assertEqual(dividends[0].symbol, "QQQI.US")
+        self.assertEqual(dividends[0].event_date, date(2026, 5, 29))
+
+    def test_parse_dividend_history_extracts_per_share_amount(self) -> None:
+        payload = [
+            {
+                "symbol": "QQQI.US",
+                "desc": "Dividend: USD 0.615/share",
+                "ex_date": "2026.05.20",
+                "payment_date": "2026.05.28",
+                "record_date": "2026.05.21",
+            },
+            {
+                "symbol": "QQQI.US",
+                "desc": "Split event",
+            },
+        ]
+
+        records = longbridge_provider.parse_longbridge_dividend_history(payload, symbol="QQQI.US")
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].amount_per_share, 0.615)
+        self.assertEqual(records[0].currency, "USD")
+        self.assertEqual(records[0].payment_date, "2026-05-28")
+
+    def test_parse_exchange_rates(self) -> None:
+        payload = {
+            "exchanges": [
+                {
+                    "base_currency": "USD",
+                    "other_currency": "CNY",
+                    "average_rate": 0.14787,
+                    "bid_rate": 0.1478,
+                    "offer_rate": 0.1479,
+                }
+            ]
+        }
+
+        rates = longbridge_provider.parse_longbridge_exchange_rates(payload)
+
+        self.assertEqual(len(rates), 1)
+        self.assertEqual(rates[0].base_currency, "USD")
+        self.assertEqual(rates[0].other_currency, "CNY")
+        self.assertEqual(rates[0].average_rate, 0.14787)
+
+    def test_us_income_sync_uses_fixed_commands_and_writes_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _ledger_paths(Path(tmp))
+            with patch.multiple(
+                portfolio_ledger,
+                DATA_DIR=paths["data"],
+                TEMPLATE_DIR=paths["templates"],
+                HOLDINGS_PATH=paths["holdings"],
+                CAPITAL_FLOWS_PATH=paths["capital_flows"],
+                PORTFOLIO_EVENTS_PATH=paths["portfolio_events"],
+                DIVIDEND_PLAN_PATH=paths["dividend_plan"],
+                US_DISTRIBUTION_HISTORY_PATH=paths["us_distribution_history"],
+            ):
+                portfolio_ledger.upsert_holding(
+                    symbol="QQQI.US",
+                    name="QQQI",
+                    market="US",
+                    currency="USD",
+                    shares=100,
+                    cost_price=50,
+                    current_price=55,
+                    annual_dividend_per_share=0,
+                    tax_rate=0,
+                )
+                cash_flow_completed = type(
+                    "Completed",
+                    (),
+                    {
+                        "returncode": 0,
+                        "stdout": json.dumps(
+                            {
+                                "data": {
+                                    "list": [
+                                        {
+                                            "transaction_flow_name": "Dividend",
+                                            "direction": "2",
+                                            "balance": "61.50",
+                                            "currency": "USD",
+                                            "business_time": "2026-05-29",
+                                            "symbol": "QQQI.US",
+                                            "description": "QQQI distribution",
+                                        }
+                                    ]
+                                }
+                            }
+                        ),
+                        "stderr": "",
+                    },
+                )()
+                dividend_completed = type(
+                    "Completed",
+                    (),
+                    {
+                        "returncode": 0,
+                        "stdout": json.dumps(
+                            [
+                                {
+                                    "symbol": "QQQI.US",
+                                    "desc": "Dividend: USD 0.615/share",
+                                    "ex_date": "2026-05-20",
+                                    "payment_date": "2026-05-28",
+                                    "record_date": "2026-05-21",
+                                }
+                            ]
+                        ),
+                        "stderr": "",
+                    },
+                )()
+                with patch("src.longbridge_provider.subprocess.run", side_effect=[cash_flow_completed, dividend_completed]) as run:
+                    result = longbridge_provider.sync_longbridge_us_income_distributions(
+                        start=date(2026, 1, 1),
+                        end=date(2026, 6, 4),
+                    )
+
+                first_args = run.call_args_list[0].args[0]
+                second_args = run.call_args_list[1].args[0]
+                self.assertEqual(
+                    first_args,
+                    ["longbridge", "cash-flow", "--start", "2026-01-01", "--end", "2026-06-04", "--format", "json"],
+                )
+                self.assertEqual(second_args, ["longbridge", "dividend", "QQQI.US", "--format", "json"])
+                self.assertEqual(result["cash_flow_import"]["created_count"], 1)
+                self.assertEqual(result["history_import"]["created_count"], 1)
+                self.assertEqual(portfolio_ledger.read_portfolio_events()[0].source, "longbridge_cash_flow")
+                self.assertEqual(portfolio_ledger.read_us_distribution_history()[0].amount_per_share, 0.615)
+
     def test_apply_cash_anchor_sync_preserves_existing_dividend_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _ledger_paths(Path(tmp))
@@ -144,6 +306,7 @@ class LongbridgeProviderTest(unittest.TestCase):
                 CAPITAL_FLOWS_PATH=paths["capital_flows"],
                 PORTFOLIO_EVENTS_PATH=paths["portfolio_events"],
                 DIVIDEND_PLAN_PATH=paths["dividend_plan"],
+                US_DISTRIBUTION_HISTORY_PATH=paths["us_distribution_history"],
             ):
                 portfolio_ledger.upsert_holding(
                     symbol="QQQI.US",
@@ -194,6 +357,7 @@ class LongbridgeProviderTest(unittest.TestCase):
                 CAPITAL_FLOWS_PATH=paths["capital_flows"],
                 PORTFOLIO_EVENTS_PATH=paths["portfolio_events"],
                 DIVIDEND_PLAN_PATH=paths["dividend_plan"],
+                US_DISTRIBUTION_HISTORY_PATH=paths["us_distribution_history"],
             ):
                 with patch("src.longbridge_provider.sync_longbridge_positions") as sync:
                     sync.return_value = {
@@ -242,6 +406,7 @@ def _ledger_paths(root: Path) -> dict[str, Path]:
         "capital_flows": data / "capital_flows.csv",
         "portfolio_events": data / "portfolio_events.csv",
         "dividend_plan": data / "dividend_plan.yaml",
+        "us_distribution_history": data / "us_distribution_history.csv",
     }
 
 

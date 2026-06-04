@@ -24,7 +24,7 @@ SYSTEM_CA_PATH = Path("/etc/ssl/cert.pem")
 
 
 def send(chat_id: str, text: str) -> None:
-    """非阻塞地把文本推送到已配置的聊天通道。"""
+    """非阻塞地把消息推送到已配置的聊天通道。"""
 
     if chat_id == "cli":
         print(f"[{chat_id}] {text}")
@@ -34,13 +34,35 @@ def send(chat_id: str, text: str) -> None:
     if settings.app_id and settings.app_secret:
         payload = {
             "receive_id": chat_id,
-            "msg_type": "text",
-            "content": json.dumps({"text": text}, ensure_ascii=False),
+            "msg_type": "post",
+            "content": json.dumps(_build_post_content(text), ensure_ascii=False),
         }
         _EXECUTOR.submit(_post_feishu_openapi_message, settings, "chat_id", payload)
         return
 
     print(f"[{chat_id}] {text}")
+
+
+def _build_post_content(text: str, title: str = "") -> dict[str, Any]:
+    """Build Feishu rich text content with one Markdown block.
+
+    Feishu OpenAPI expects ``content`` itself to be a JSON string. The caller handles
+    serialization; this helper only builds the inner rich-text structure.
+    """
+
+    return {
+        "zh_cn": {
+            "title": title,
+            "content": [
+                [
+                    {
+                        "tag": "md",
+                        "text": text,
+                    }
+                ]
+            ],
+        }
+    }
 
 
 def send_card(chat_id: str, title: str, text: str, actions: list[dict[str, str]]) -> None:

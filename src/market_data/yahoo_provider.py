@@ -3,11 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 from src.market_data.models import MarketDataResult, error_result, ok_result
-from src.market_data.symbol_mapper import to_yahoo_symbol
+from src.market_data.symbol_mapper import infer_market, to_yahoo_symbol
 
 
-def fetch_yahoo_quote(symbol: str) -> MarketDataResult:
+def fetch_yahoo_quote(symbol: str, *, market: str | None = None) -> MarketDataResult:
     yahoo_symbol = to_yahoo_symbol(symbol)
+    clean_market = (market or infer_market(symbol)).upper()
     try:
         yf = _import_yfinance()
         ticker = yf.Ticker(yahoo_symbol)
@@ -20,23 +21,23 @@ def fetch_yahoo_quote(symbol: str) -> MarketDataResult:
             "provider_symbol": yahoo_symbol,
             "current_price": current_price,
             "annual_dividend_per_share": dividend,
-            "currency": str(_safe_get(info, "currency") or "CNY"),
+            "currency": str(_safe_get(info, "currency") or ("USD" if clean_market == "US" else "CNY")),
             "price_status": "ok" if current_price > 0 else "missing",
             "dividend_status": "ok" if dividend > 0 else "missing",
         }
         if current_price <= 0:
             return error_result(
                 source="yfinance",
-                market="CN",
+                market=clean_market,
                 symbol=symbol,
                 data=data,
                 error="Yahoo Finance 未返回可用最新价。",
             )
-        return ok_result(source="yfinance", market="CN", symbol=symbol, data=data)
+        return ok_result(source="yfinance", market=clean_market, symbol=symbol, data=data)
     except ImportError:
         return error_result(
             source="yfinance",
-            market="CN",
+            market=clean_market,
             symbol=symbol,
             error="未安装 yfinance。请先安装依赖：pip install yfinance。",
             data={"provider_symbol": yahoo_symbol},
@@ -44,7 +45,7 @@ def fetch_yahoo_quote(symbol: str) -> MarketDataResult:
     except Exception as exc:
         return error_result(
             source="yfinance",
-            market="CN",
+            market=clean_market,
             symbol=symbol,
             error=f"Yahoo Finance 查询失败：{exc}",
             data={"provider_symbol": yahoo_symbol},

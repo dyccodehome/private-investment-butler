@@ -25,8 +25,23 @@ class PromptsTest(unittest.TestCase):
         text = prompts.growth_review_system_prompt()
 
         self.assertIn("Growth_Engine", text)
-        self.assertIn("措辞准确、简洁、中性", text)
+        self.assertIn("投资管家", text)
+        self.assertIn("不要输出 Markdown 表格", text)
         self.assertNotIn("{{", text)
+
+    def test_worker_prompt_uses_concise_user_style(self) -> None:
+        text = prompts.worker_user_prompt(
+            framework_id="Cash_Anchor",
+            context_bundle_id="CN_Dividend_Income",
+            loaded_context_files=["constitution.md"],
+            strategy_context="策略上下文",
+            user_input="红利持仓今年分红怎么看",
+            disclosed_data_names="portfolio_snapshot",
+            disclosed_data="{}",
+        )
+
+        self.assertIn("不要套用", text)
+        self.assertIn("不要输出 Markdown 表格", text)
 
     def test_auditor_persona_selects_dynamic_section(self) -> None:
         risk = prompts.auditor_system_prompt("risk", risk_persona="risk", purist_persona="purist")

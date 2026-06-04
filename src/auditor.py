@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 
+from src.data_quality import summarize_disclosures
 from src.llm_client import LLMClient
 from src.prompts import auditor_system_prompt, auditor_user_prompt
 from src.research_dossier import extract_symbol
@@ -116,15 +117,37 @@ def _select_persona(state: AgentState) -> str:
 def _format_pass(state: AgentState) -> str:
     """构造审计未拒绝时面向用户的回复。"""
 
-    audit = "\n".join(f"- {item.content}" for item in state.audit_log)
-    return f"{state.draft_decision}\n\n审计记录：\n{audit}"
+    answer = state.draft_decision or ""
+    if state.audit_signal == "WARN":
+        note = _audit_user_note(state)
+        if note:
+            return f"{answer}\n\n审计提醒：{note}"
+    return answer
 
 
 def _format_rejection(state: AgentState) -> str:
     """构造熔断触发时面向用户的回复。"""
 
-    audit = "\n".join(f"- [{item.verdict}] {item.content}" for item in state.audit_log)
-    return "流程已暂停，等待人工确认。\n\n" + audit
+    note = _audit_user_note(state) or "审计发现硬风险，我先把这次建议停住。"
+    return f"我先把这次建议停住，等你确认。\n\n原因：{note}"
+
+
+def _audit_user_note(state: AgentState) -> str:
+    """Extract a short user-facing audit note without exposing the full audit log."""
+
+    if not state.audit_log:
+        return ""
+    text = state.audit_log[-1].content.strip()
+    lines = [
+        line.strip(" -")
+        for line in text.splitlines()
+        if line.strip() and not line.strip().startswith("[")
+    ]
+    for marker in ("审计结论", "5. 审计结论"):
+        for index, line in enumerate(lines):
+            if marker in line and index + 1 < len(lines):
+                return lines[index + 1][:160]
+    return (lines[-1] if lines else text)[:160]
 
 
 def _parse_audit_verdict(critique: str) -> str:
@@ -186,4 +209,12 @@ def _summarize_disclosed_data(state: AgentState) -> str:
                 "payload_preview": str(item.payload)[:600],
             }
         )
-    return json.dumps(rows, ensure_ascii=False, indent=2)
+    return json.dumps(
+        {
+            "data_quality_summary": summarize_disclosures(state.disclosed_data),
+            "output_contract": state.output_contract,
+            "disclosures": rows,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )

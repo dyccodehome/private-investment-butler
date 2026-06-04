@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from src.data_quality import summarize_disclosures
 from src.init import RUNTIME_DIR
 from src.state import AgentState, PipelineStatus
 
@@ -34,6 +35,9 @@ class DecisionRecord:
     user_input: str
     state_snapshot_refs: list[str] = field(default_factory=list)
     skill_disclosures: list[dict[str, Any]] = field(default_factory=list)
+    output_contract: dict[str, Any] = field(default_factory=dict)
+    decision_snapshot: dict[str, Any] = field(default_factory=dict)
+    data_quality_summary: dict[str, Any] = field(default_factory=dict)
     draft_decision: str | None = None
     audit_persona: str | None = None
     audit_signal: str | None = None
@@ -76,6 +80,9 @@ def build_decision_record(state: AgentState, *, created_at: str | None = None) -
         user_input=state.user_input,
         state_snapshot_refs=_state_snapshot_refs(state),
         skill_disclosures=[_compact_disclosure(item) for item in state.disclosed_data],
+        output_contract=dict(state.output_contract),
+        decision_snapshot=dict(state.decision_snapshot),
+        data_quality_summary=summarize_disclosures(state.disclosed_data),
         draft_decision=state.draft_decision,
         audit_persona=state.audit_persona,
         audit_signal=state.audit_signal,
@@ -133,6 +140,8 @@ def _compact_disclosure(item: Any) -> dict[str, Any]:
             "freshness": result.get("freshness"),
             "warnings": result.get("warnings") or [],
             "error": result.get("error") or "",
+            "data_quality": result.get("data_quality") or {},
+            "source_chain": result.get("source_chain") or [],
             "data_keys": sorted(data.keys()) if isinstance(data, dict) else [],
         }
     return {

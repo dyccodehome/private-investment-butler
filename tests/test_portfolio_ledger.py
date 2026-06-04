@@ -130,7 +130,7 @@ class PortfolioLedgerTest(unittest.TestCase):
                 self.assertEqual([item.event_type for item in events], ["buy", "buy", "sell", "dividend"])
                 self.assertTrue(paths["portfolio_events"].exists())
 
-    def test_enriched_portfolio_snapshot_attaches_market_data(self) -> None:
+    def test_snapshot_separates_received_dividends_from_forecast_gaps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _ledger_paths(Path(tmp))
             with _patch_ledger_paths(paths):
@@ -141,6 +141,236 @@ class PortfolioLedgerTest(unittest.TestCase):
                     cost_price=24,
                     current_price=24,
                     annual_dividend_per_share=0,
+                    tax_rate=0,
+                    as_of=date(2026, 5, 24),
+                    notes="current_price=pending_quote",
+                )
+                portfolio_ledger.record_dividend(
+                    symbol="600900.SH",
+                    amount=300,
+                    dividend_date=date(2026, 6, 20),
+                )
+
+                snapshot = portfolio_ledger.build_portfolio_snapshot(as_of=date(2026, 6, 21))
+
+        self.assertEqual(snapshot["summary"]["current_year_dividend_received"], 300)
+        self.assertEqual(snapshot["summary"]["current_year_dividend_received_by_currency"], [{"currency": "CNY", "amount": 300}])
+        self.assertEqual(snapshot["dividend_analysis"]["status"], "partial")
+        self.assertEqual(snapshot["dividend_analysis"]["current_year_received"]["event_count"], 1)
+        self.assertEqual(snapshot["dividend_analysis"]["forecast_from_holdings"]["missing_position_count"], 1)
+        self.assertIn("/dividend", "\n".join(snapshot["dividend_analysis"]["repair_actions"]))
+        self.assertEqual(snapshot["data_quality"]["pending_quote_symbols"][0]["symbol"], "600900.SH")
+
+    def test_snapshot_reports_mixed_currency_and_duplicate_symbols(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _ledger_paths(Path(tmp))
+            with _patch_ledger_paths(paths):
+                portfolio_ledger.upsert_holding(
+                    symbol="QQQI.US",
+                    name="QQQI",
+                    market="US",
+                    currency="USD",
+                    shares=10,
+                    cost_price=50,
+                    current_price=55,
+                    annual_dividend_per_share=1,
+                    tax_rate=0,
+                    as_of=date(2026, 5, 24),
+                )
+                portfolio_ledger.upsert_holding(
+                    symbol="600132.SH",
+                    name="重庆啤酒",
+                    market="A股",
+                    currency="CNY",
+                    shares=100,
+                    cost_price=70,
+                    current_price=70,
+                    annual_dividend_per_share=0,
+                    tax_rate=0,
+                    as_of=date(2026, 5, 24),
+                )
+                snapshot = portfolio_ledger.upsert_holding(
+                    symbol="600132",
+                    name="重庆啤酒",
+                    market="A股",
+                    currency="CNY",
+                    shares=200,
+                    cost_price=52,
+                    current_price=52,
+                    annual_dividend_per_share=0,
+                    tax_rate=0,
+                    as_of=date(2026, 5, 24),
+                )
+
+        self.assertEqual(snapshot["summary"]["currency_scope"], "mixed")
+        self.assertTrue(snapshot["currency_breakdown"]["is_mixed_currency"])
+        groups = {(item["market"], item["currency"]) for item in snapshot["market_breakdown"]["groups"]}
+        self.assertIn(("A股", "CNY"), groups)
+        self.assertIn(("US", "USD"), groups)
+        duplicates = snapshot["data_quality"]["duplicate_symbol_groups"]
+        self.assertEqual(duplicates[0]["canonical_symbol"], "600132")
+        self.assertIn("不能把成本", "\n".join(snapshot["data_quality"]["warnings"]))
+
+    def test_snapshot_builds_us_income_distribution_forecast(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _ledger_paths(Path(tmp))
+            with _patch_ledger_paths(paths):
+                portfolio_ledger.upsert_holding(
+                    symbol="QQQI.US",
+                    name="QQQI",
+                    market="US",
+                    currency="USD",
+                    shares=100,
+                    cost_price=50,
+                    current_price=55,
+                    annual_dividend_per_share=0,
+                    tax_rate=0,
+                    as_of=date(2026, 1, 2),
+                )
+                portfolio_ledger.upsert_us_distribution_history(
+                    [
+                        portfolio_ledger.USDistributionRecord(
+                            symbol="QQQI.US",
+                            ex_date="2026-03-20",
+                            payment_date="2026-03-28",
+                            record_date="2026-03-21",
+                            amount_per_share=0.6,
+                            currency="USD",
+                            source="longbridge_dividend_history",
+                            notes="Dividend: USD 0.6/share",
+                        ),
+                        portfolio_ledger.USDistributionRecord(
+                            symbol="QQQI.US",
+                            ex_date="2026-04-20",
+                            payment_date="2026-04-28",
+                            record_date="2026-04-21",
+                            amount_per_share=0.7,
+                            currency="USD",
+                            source="longbridge_dividend_history",
+                            notes="Dividend: USD 0.7/share",
+                        ),
+                        portfolio_ledger.USDistributionRecord(
+                            symbol="QQQI.US",
+                            ex_date="2026-05-20",
+                            payment_date="2026-05-28",
+                            record_date="2026-05-21",
+                            amount_per_share=0.8,
+                            currency="USD",
+                            source="longbridge_dividend_history",
+                            notes="Dividend: USD 0.8/share",
+                        ),
+                    ]
+                )
+
+                snapshot = portfolio_ledger.build_portfolio_snapshot(as_of=date(2026, 6, 4))
+
+        forecast = snapshot["dividend_analysis"]["us_income_distribution_forecast"]
+        self.assertEqual(forecast["positions"][0]["symbol"], "QQQI.US")
+        self.assertEqual(forecast["positions"][0]["trailing_3m"]["record_count"], 3)
+        self.assertGreater(forecast["positions"][0]["trailing_3m"]["estimated_annual_cash"], 800)
+        self.assertIn("滚动预测", forecast["policy"])
+        estimate = snapshot["dividend_analysis"]["portfolio_dividend_yield_estimate"]
+        self.assertEqual(estimate["positions"][0]["selected_window"], "trailing_6m")
+        self.assertEqual(estimate["portfolio_total"]["status"], "ok")
+        self.assertGreater(estimate["portfolio_total"]["current_yield"], 0.07)
+
+    def test_dividend_yield_estimate_separates_a_share_and_us_income(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _ledger_paths(Path(tmp))
+            with _patch_ledger_paths(paths):
+                portfolio_ledger.upsert_holding(
+                    symbol="600900",
+                    name="长江电力",
+                    market="A股",
+                    currency="CNY",
+                    shares=1000,
+                    cost_price=25,
+                    current_price=25,
+                    annual_dividend_per_share=1,
+                    tax_rate=0,
+                    as_of=date(2026, 1, 2),
+                )
+                portfolio_ledger.upsert_holding(
+                    symbol="QQQI.US",
+                    name="QQQI",
+                    market="US",
+                    currency="USD",
+                    shares=100,
+                    cost_price=50,
+                    current_price=55,
+                    annual_dividend_per_share=0,
+                    tax_rate=0,
+                    as_of=date(2026, 1, 2),
+                )
+                portfolio_ledger.upsert_us_distribution_history(
+                    [
+                        portfolio_ledger.USDistributionRecord(
+                            symbol="QQQI.US",
+                            ex_date="2026-03-20",
+                            payment_date="2026-03-28",
+                            record_date="2026-03-21",
+                            amount_per_share=0.6,
+                            currency="USD",
+                            source="longbridge_dividend_history",
+                        ),
+                        portfolio_ledger.USDistributionRecord(
+                            symbol="QQQI.US",
+                            ex_date="2026-04-20",
+                            payment_date="2026-04-28",
+                            record_date="2026-04-21",
+                            amount_per_share=0.7,
+                            currency="USD",
+                            source="longbridge_dividend_history",
+                        ),
+                        portfolio_ledger.USDistributionRecord(
+                            symbol="QQQI.US",
+                            ex_date="2026-05-20",
+                            payment_date="2026-05-28",
+                            record_date="2026-05-21",
+                            amount_per_share=0.8,
+                            currency="USD",
+                            source="longbridge_dividend_history",
+                        ),
+                    ]
+                )
+
+                snapshot = portfolio_ledger.build_portfolio_snapshot(as_of=date(2026, 6, 4))
+
+        estimate = snapshot["dividend_analysis"]["portfolio_dividend_yield_estimate"]
+        groups = {(item["market"], item["currency"]): item for item in estimate["by_market"]}
+        self.assertIn(("A股", "CNY"), groups)
+        self.assertIn(("US", "USD"), groups)
+        self.assertAlmostEqual(groups[("A股", "CNY")]["current_yield"], 0.04)
+        self.assertGreater(groups[("US", "USD")]["current_yield"], 0.07)
+        self.assertEqual(estimate["portfolio_total"]["status"], "requires_fx")
+        estimate_with_fx = portfolio_ledger._build_portfolio_dividend_yield_estimate(
+            snapshot["positions"],
+            snapshot["dividend_analysis"]["us_income_distribution_forecast"],
+            base_currency="CNY",
+            fx_rates=[
+                {
+                    "base_currency": "USD",
+                    "other_currency": "CNY",
+                    "average_rate": 0.14787,
+                }
+            ],
+            fx_source="longbridge_exchange_rate",
+        )
+        self.assertEqual(estimate_with_fx["portfolio_total"]["status"], "ok")
+        self.assertEqual(estimate_with_fx["portfolio_total"]["currency"], "CNY")
+        self.assertGreater(estimate_with_fx["portfolio_total"]["current_yield"], 0.04)
+
+    def test_enriched_portfolio_snapshot_attaches_market_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _ledger_paths(Path(tmp))
+            with _patch_ledger_paths(paths):
+                portfolio_ledger.upsert_holding(
+                    symbol="600900.SH",
+                    name="长江电力",
+                    shares=1000,
+                    cost_price=24,
+                    current_price=24,
+                    annual_dividend_per_share=1,
                     tax_rate=0,
                     as_of=date(2026, 5, 24),
                     notes="current_price=pending_quote",
@@ -159,6 +389,16 @@ class PortfolioLedgerTest(unittest.TestCase):
                 after = paths["holdings"].read_text(encoding="utf-8")
 
         self.assertEqual(snapshot["market_data"]["600900.SH"]["source"], "yfinance")
+        self.assertEqual(snapshot["market_data_summary"]["status_counts"], {"ok": 1})
+        self.assertNotIn("annual_dividend_per_share", snapshot["market_data"]["600900.SH"]["data"])
+        self.assertEqual(snapshot["market_data"]["600900.SH"]["data"]["cashflow_dividend_usable"], False)
+        self.assertIn("annual_dividend_per_share", snapshot["market_data"]["600900.SH"]["data"]["ignored_dividend_fields"])
+        self.assertIn("持仓账本", snapshot["market_data_policy"]["failure_policy"])
+        self.assertIn("利润分配公告", snapshot["market_data_policy"]["cashflow_dividend_policy"])
+        estimate = snapshot["dividend_analysis"]["portfolio_dividend_yield_estimate"]
+        group = estimate["by_market"][0]
+        self.assertEqual(group["market_value"], 28500)
+        self.assertAlmostEqual(group["current_yield"], 1000 / 28500, places=6)
         self.assertEqual(before, after)
         fetch_quote.assert_called_once_with("600900.SH", market="A股")
 
@@ -187,6 +427,7 @@ def _ledger_paths(root: Path) -> dict[str, Path]:
         "capital_flows": data / "capital_flows.csv",
         "portfolio_events": data / "portfolio_events.csv",
         "dividend_plan": data / "dividend_plan.yaml",
+        "us_distribution_history": data / "us_distribution_history.csv",
     }
 
 
@@ -199,6 +440,7 @@ def _patch_ledger_paths(paths: dict[str, Path]):
         CAPITAL_FLOWS_PATH=paths["capital_flows"],
         PORTFOLIO_EVENTS_PATH=paths["portfolio_events"],
         DIVIDEND_PLAN_PATH=paths["dividend_plan"],
+        US_DISTRIBUTION_HISTORY_PATH=paths["us_distribution_history"],
     )
 
 

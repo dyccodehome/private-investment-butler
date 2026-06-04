@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from src import skills
+from src.market_data.models import error_result, ok_result
 from src.market_data import provider_router
 from src.market_data.symbol_mapper import infer_market, to_longbridge_symbol, to_yahoo_symbol
 
@@ -22,23 +23,58 @@ class MarketDataTest(unittest.TestCase):
         with patch("src.market_data.provider_router.fetch_yahoo_quote") as yahoo, patch(
             "src.market_data.provider_router.fetch_longbridge_quote"
         ) as longbridge:
-            yahoo.return_value.to_dict.return_value = {"status": "ok", "source": "yfinance"}
+            yahoo.return_value = ok_result(
+                source="yfinance",
+                market="CN",
+                symbol="600900.SH",
+                data={"current_price": 30.0, "dividend_status": "missing"},
+            )
             result = provider_router.fetch_market_data("600900.SH", market="CN")
 
         self.assertEqual(result["source"], "yfinance")
-        yahoo.assert_called_once_with("600900.SH")
+        self.assertIn("data_quality", result)
+        self.assertEqual(result["data"]["market_phase"]["market"], "CN")
+        yahoo.assert_called_once_with("600900.SH", market="CN")
         longbridge.assert_not_called()
 
     def test_provider_router_uses_longbridge_for_us(self) -> None:
         with patch("src.market_data.provider_router.fetch_yahoo_quote") as yahoo, patch(
             "src.market_data.provider_router.fetch_longbridge_quote"
         ) as longbridge:
-            longbridge.return_value.to_dict.return_value = {"status": "ok", "source": "longbridge"}
+            longbridge.return_value = ok_result(
+                source="longbridge",
+                market="US",
+                symbol="QQQI.US",
+                data={"current_price": 57.0, "dividend_status": "missing"},
+            )
             result = provider_router.fetch_market_data("QQQI", market="US")
 
         self.assertEqual(result["source"], "longbridge")
+        self.assertEqual(result["source_chain"][0]["provider"], "longbridge")
         longbridge.assert_called_once_with("QQQI")
         yahoo.assert_not_called()
+
+    def test_provider_router_falls_back_to_yahoo_for_us(self) -> None:
+        with patch("src.market_data.provider_router.fetch_yahoo_quote") as yahoo, patch(
+            "src.market_data.provider_router.fetch_longbridge_quote"
+        ) as longbridge:
+            longbridge.return_value = error_result(
+                source="longbridge",
+                market="US",
+                symbol="QQQI.US",
+                error="not configured",
+            )
+            yahoo.return_value = ok_result(
+                source="yfinance",
+                market="US",
+                symbol="QQQI.US",
+                data={"current_price": 58.0, "dividend_status": "missing"},
+            )
+            result = provider_router.fetch_market_data("QQQI", market="US")
+
+        self.assertEqual(result["source"], "yfinance")
+        self.assertEqual([item["provider"] for item in result["source_chain"]], ["longbridge", "yfinance"])
+        yahoo.assert_called_once_with("QQQI", market="US")
 
     def test_longbridge_market_provider_wraps_quote(self) -> None:
         from src.longbridge_provider import LongbridgeQuote

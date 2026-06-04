@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from src.data_quality import summarize_disclosures
 from src.init import FRAMEWORKS_DIR
 from src.state import AgentState, DebateEntry
 
@@ -85,6 +86,9 @@ def _build_record(state: AgentState, timestamp: datetime) -> dict[str, Any]:
         "route_attempts": state.route_attempts,
         "user_query": state.user_input,
         "disclosed_data": [_compact_disclosure(item) for item in state.disclosed_data],
+        "output_contract": state.output_contract,
+        "decision_snapshot": state.decision_snapshot,
+        "data_quality_summary": summarize_disclosures(state.disclosed_data),
         "agent_proposal": state.draft_decision,
         "auditor_critique": [asdict(item) for item in state.audit_log],
         "audit_persona": state.audit_persona,

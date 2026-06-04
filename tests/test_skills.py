@@ -35,6 +35,25 @@ class SkillsTest(unittest.TestCase):
         self.assertEqual(payload["source"], "iwencai_news_search")
         self.assertEqual(payload["data_type"], "news")
         self.assertIn("freshness", payload)
+        self.assertIn("data_quality", payload)
+        self.assertEqual(payload["data_quality"]["coverage"]["news"], "missing")
+        self.assertIn("IWENCAI_API_KEY", payload["error"])
+
+    def test_announcement_search_without_key_returns_not_configured_payload(self) -> None:
+        with patch.dict(os.environ, {"IWENCAI_API_KEY": ""}):
+            loaded = skills.load_skill(
+                "announcement-search",
+                {"query": "600900 长江电力 年报 分红"},
+                framework_id="Cash_Anchor",
+                agent_role="worker",
+            )
+        payload = loaded.to_payload()["result"]
+
+        self.assertEqual(payload["status"], "provider_not_configured")
+        self.assertEqual(payload["source"], "iwencai_announcement_search")
+        self.assertEqual(payload["data_type"], "announcement")
+        self.assertIn("data_quality", payload)
+        self.assertEqual(payload["data_quality"]["coverage"]["announcement"], "missing")
         self.assertIn("IWENCAI_API_KEY", payload["error"])
 
     def test_trade_history_reads_local_chat_history(self) -> None:

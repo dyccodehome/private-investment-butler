@@ -28,6 +28,7 @@ class CommandRegistryTest(unittest.TestCase):
         self.assertNotIn("/plan contribution=<amount> dividend=<amount>", text)
         self.assertIn("/holding", text)
         self.assertIn("/holdings", text)
+        self.assertIn("/sync longbridge dividends", text)
         self.assertIn("/growth-holdings", text)
         self.assertIn("/growth-watchlist", text)
         self.assertIn("/growth-review", text)
@@ -197,6 +198,34 @@ class CommandRegistryTest(unittest.TestCase):
         self.assertIsNotNone(reply)
         self.assertIn("长桥持仓同步提案", reply or "")
         self.assertIn("QQQI.US", reply or "")
+
+    @patch("src.longbridge_provider.sync_longbridge_us_income_distributions")
+    def test_sync_longbridge_dividends_uses_provider(self, sync_income) -> None:
+        sync_income.return_value = {
+            "period": {"start": "2026-01-01", "end": "2026-06-04"},
+            "symbols": ["QQQI.US"],
+            "cash_flow_import": {"created_count": 1, "duplicate_count": 0},
+            "history_import": {"created_count": 1, "updated_count": 0, "total_count": 1, "failures": []},
+            "forecast": {
+                "positions": [
+                    {
+                        "symbol": "QQQI.US",
+                        "currency": "USD",
+                        "trailing_3m": {"estimated_annual_cash": 1200},
+                        "trailing_6m": {"estimated_annual_cash": 1100},
+                        "trailing_12m": {"estimated_annual_cash": 1000},
+                    }
+                ]
+            },
+        }
+
+        reply = handle_command("/sync longbridge dividends start=2026-01-01 end=2026-06-04", "cli")
+
+        self.assertIsNotNone(reply)
+        self.assertIn("长桥美元分配同步完成", reply or "")
+        self.assertIn("QQQI.US", reply or "")
+        self.assertEqual(sync_income.call_args.kwargs["start"].isoformat(), "2026-01-01")
+        self.assertEqual(sync_income.call_args.kwargs["end"].isoformat(), "2026-06-04")
 
     @patch("src.longbridge_provider.apply_longbridge_cash_anchor_sync")
     def test_apply_longbridge_uses_provider(self, apply_sync) -> None:

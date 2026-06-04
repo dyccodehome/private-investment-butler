@@ -37,7 +37,7 @@ CASH_ANCHOR_LEDGER_KEYWORDS = [
 CASH_ANCHOR_CONTEXT_BUNDLES = {
     "CN_Dividend_Income": {
         "path": "sub_frameworks/CN_Dividend_Income.md",
-        "keywords": ["a股", "A股", "港股", "红利", "股息", "分红", "低估值", "银行", "煤炭", "电力", "公用事业", "运营商", "股息率"],
+        "keywords": ["a股", "A股", "红利", "股息", "分红", "低估值", "银行", "煤炭", "电力", "公用事业", "运营商", "股息率"],
     },
     "US_Income_Options": {
         "path": "sub_frameworks/US_Income_Options.md",
@@ -220,8 +220,21 @@ def stage_one_request_skills(state: AgentState) -> AgentState:
                     arguments={"framework_id": state.framework_id, "symbol": symbol},
                     reason="需要读取历史决策逻辑，避免重复犯错。",
                 ),
+                SkillRequest(
+                    skill_name="news-search",
+                    arguments={"query": _news_query(symbol, state.user_input)},
+                    reason="需要读取近期新闻情报，避免只用行情和本地账本做判断。",
+                ),
             ]
         )
+        if _needs_announcement_intel(state.user_input):
+            requested_skills.append(
+                SkillRequest(
+                    skill_name="announcement-search",
+                    arguments={"query": _announcement_query(symbol, state.user_input)},
+                    reason="问题涉及财报、分红、风险或交易动作，需要核对正式公告口径。",
+                )
+            )
     else:
         state.worker_notes.append("未识别到具体标的代码，跳过行情与交易历史 Skill，避免把自然语言误当作证券代码。")
 
@@ -280,6 +293,38 @@ def _needs_cash_anchor_ledger(state: AgentState) -> bool:
         return False
     text = state.user_input.lower()
     return any(keyword.lower() in text for keyword in CASH_ANCHOR_LEDGER_KEYWORDS)
+
+
+def _needs_announcement_intel(user_input: str) -> bool:
+    text = user_input.lower()
+    keywords = [
+        "公告",
+        "财报",
+        "年报",
+        "季报",
+        "分红",
+        "股息",
+        "利润分配",
+        "权益分派",
+        "风险",
+        "买入",
+        "卖出",
+        "加仓",
+        "减仓",
+        "建仓",
+        "补仓",
+        "earnings",
+        "dividend",
+    ]
+    return any(keyword in text for keyword in keywords)
+
+
+def _news_query(symbol: str, user_input: str) -> str:
+    return f"{symbol} {user_input[:80]} 最新 新闻"
+
+
+def _announcement_query(symbol: str, user_input: str) -> str:
+    return f"{symbol} {user_input[:80]} 财报 公告 分红 风险"
 
 
 def _read_context_file(path: Path) -> str:

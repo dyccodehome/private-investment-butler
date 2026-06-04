@@ -125,6 +125,22 @@ tools:
     output_schema: SkillPayload
     data_type: news
 
+  announcement-search:
+    description: 调用公司公告搜索 Provider 获取财报、利润分配和权益分派公告。
+    risk_level: low
+    access_type: external_read
+    allowed_frameworks:
+      - Cash_Anchor
+      - Growth_Engine
+    allowed_agents:
+      - worker
+      - auditor
+    requires_human_approval: false
+    timeout_seconds: 20
+    audit_level: full
+    output_schema: SkillPayload
+    data_type: announcement
+
   longbridge_positions:
     description: 读取长桥持仓并生成只读同步提案。
     risk_level: medium
@@ -140,6 +156,43 @@ tools:
     audit_level: full
     output_schema: LongbridgeSyncProposal
     data_type: broker_position_sync
+
+  longbridge_us_income_distributions:
+    description: 读取长桥资金流水和历史分红记录，生成美元收益分配同步结果。
+    risk_level: medium
+    access_type: external_read
+    allowed_frameworks:
+      - Cash_Anchor
+    allowed_agents:
+      - command
+      - scheduler
+    allowed_commands:
+      - longbridge cash-flow --start <YYYY-MM-DD> --end <YYYY-MM-DD> --format json
+      - longbridge dividend <symbol> --format json
+    requires_human_approval: false
+    timeout_seconds: 15
+    audit_level: full
+    output_schema: LongbridgeUSIncomeDistributionSync
+    data_type: broker_income_sync
+
+  longbridge_exchange_rate:
+    description: 读取长桥当前汇率，用于跨币种组合收益率合并计算。
+    risk_level: low
+    access_type: external_read
+    allowed_frameworks:
+      - Cash_Anchor
+      - Growth_Engine
+    allowed_agents:
+      - worker
+      - command
+      - scheduler
+    allowed_commands:
+      - longbridge exchange-rate --format json
+    requires_human_approval: false
+    timeout_seconds: 15
+    audit_level: full
+    output_schema: LongbridgeExchangeRates
+    data_type: currency_exchange_rate
 
   accept_patch_proposal:
     description: 将人工确认后的宪法补丁写入目标 constitution 文件。

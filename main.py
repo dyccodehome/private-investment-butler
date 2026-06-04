@@ -13,6 +13,7 @@ from src.context_logger import save_chat_session
 from src.decision_record import save_decision_record
 from src.error_classifier import classify_error
 from src.master_router import route_intent
+from src.output_contract import apply_output_contract
 from src.skills import load_skill
 from src.state import AgentState, DisclosureRecord, PipelineStatus
 from src.session_lock import save_pending_action
@@ -53,7 +54,7 @@ def run_pipeline(user_input: str, chat_id: str = "cli") -> AgentState:
         )
         communication_gate.send(
             chat_id,
-            f"路由结果：{state.route_reason}。目标框架：{state.framework_id}",
+            _route_user_message(state),
         )
 
         # 2. 被选中的子 Agent 可以在昂贵推理前拒绝接单。
@@ -94,8 +95,7 @@ def run_pipeline(user_input: str, chat_id: str = "cli") -> AgentState:
         # 3. 子 Agent 在最终推理前申请最小必要数据。
         communication_gate.send(
             chat_id,
-            f"已选择框架：{state.framework_id} / {state.context_bundle_id or '默认上下文'}。"
-            "正在检查需要加载的数据。",
+            _context_user_message(state),
         )
         state = stage_one_request_skills(state)
         trace_state_event(
@@ -116,7 +116,7 @@ def run_pipeline(user_input: str, chat_id: str = "cli") -> AgentState:
             for request in state.requested_skills:
                 communication_gate.send(
                     chat_id,
-                    f"正在加载数据：{request.skill_name}。原因：{request.reason}",
+                    _skill_user_message(request.skill_name),
                 )
                 try:
                     loaded_skill = load_skill(
@@ -164,16 +164,18 @@ def run_pipeline(user_input: str, chat_id: str = "cli") -> AgentState:
         try:
             # 5. 子 Agent 生成决策草案，随后由 AOP 审计层拦截。
             state = stage_two_decide(state)
+            state = apply_output_contract(state)
             trace_state_event(
                 state,
                 "draft_decision_created",
                 agent_role="worker",
                 output_preview=state.draft_decision,
                 risk_flags=_decision_risk_flags(state),
+                metadata={"output_contract": state.output_contract},
             )
             communication_gate.send(
                 chat_id,
-                "决策草案已生成，正在进行审计。",
+                "我把初步结论再过一遍风险，确认没硬伤就发给你。",
             )
             trace_state_event(state, "audit_started", agent_role="auditor")
             state = audit_before_output(state)
@@ -250,6 +252,45 @@ def _send_terminal_result(chat_id: str, state: AgentState) -> None:
     communication_gate.send(chat_id, state.final_answer or "\n".join(state.errors))
 
 
+def _route_user_message(state: AgentState) -> str:
+    label = {
+        "Cash_Anchor": "现金流和防守仓",
+        "Growth_Engine": "成长仓",
+    }.get(state.framework_id or "", state.framework_id or "当前问题")
+    return f"我先按{label}来处理。"
+
+
+def _context_user_message(state: AgentState) -> str:
+    context = _framework_label(state.context_bundle_id or state.framework_id or "当前框架")
+    return f"我会按 {context} 的规则看，同时只读这次需要的本地数据。"
+
+
+def _skill_user_message(skill_name: str) -> str:
+    messages = {
+        "portfolio_snapshot": "我先读一下持仓、投入和分红账本。",
+        "research_dossier": "我顺手看一下这个标的以前留下的研究档案。",
+        "hithink-market-query": "我查一下只读行情，主要用于价格和纪律判断。",
+        "trade_history": "我回看一下之前有没有相关判断记录。",
+        "news-search": "我查一下近期外部信息，避免只看账本。",
+        "announcement-search": "我查一下企业公告，只取财报和分配公告口径。",
+    }
+    return messages.get(skill_name, "我补一项必要数据。")
+
+
+def _framework_label(value: str) -> str:
+    labels = {
+        "Cash_Anchor": "现金锚点",
+        "Cash_Anchor_Core": "现金锚点",
+        "CN_Dividend_Income": "境内红利现金流",
+        "US_Income_Options": "美元收益",
+        "Growth_Engine": "成长引擎",
+        "Growth_Engine_Core": "成长引擎",
+        "CN_Alpha_Growth": "境内成长",
+        "US_Disruptive_Growth": "全球成长",
+    }
+    return labels.get(value, value)
+
+
 def _handle_pipeline_error(state: AgentState, chat_id: str, exc: BaseException) -> None:
     """把模型/API 异常转换为可读失败状态，而不是让后台任务崩栈。"""
 
@@ -268,6 +309,8 @@ def _save_decision_state(state: AgentState) -> None:
     """Write Decision Record and trace the record path."""
 
     try:
+        if state.draft_decision:
+            state = apply_output_contract(state)
         path = save_decision_record(state)
     except Exception as exc:
         trace_state_event(

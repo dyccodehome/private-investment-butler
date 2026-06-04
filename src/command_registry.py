@@ -92,7 +92,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<multi-line key=value records>",
     ),
     CommandDef("growth-review", "按 Growth_Engine 框架复盘单个持仓或自选标的", "Growth", args_hint="<symbol>"),
-    CommandDef("sync", "同步外部券商数据；当前支持 longbridge 占位检查", "Ledger", args_hint="longbridge"),
+    CommandDef("sync", "同步外部券商数据；当前支持长桥持仓和美元分配", "Ledger", args_hint="longbridge|longbridge dividends"),
     CommandDef("apply", "确认并写入外部同步结果；当前支持 longbridge cash_anchor", "Ledger", args_hint="longbridge cash_anchor"),
     CommandDef(
         "absorb",
@@ -178,6 +178,7 @@ def help_text() -> str:
         "/dividend symbol=<code> amount=<amount> [date=YYYY-MM-DD] - 记录现金分红",
         "/snapshot - 查看 Cash Anchor 本地持仓快照",
         "/sync longbridge - 读取长桥持仓并生成同步提案",
+        "/sync longbridge dividends [start=YYYY-MM-DD] [end=YYYY-MM-DD] - 同步长桥美元分配到账和历史分配",
         "/apply longbridge cash_anchor - 确认后把长桥 QQQI/XQQI/TQQQ 写入 Cash Anchor 账本",
         "",
         "Growth Engine：",
@@ -597,16 +598,40 @@ def _handle_growth_review(args: str, chat_id: str) -> str:
 
 
 def _handle_sync(args: str, chat_id: str) -> str:
-    target = args.strip().lower()
-    if target != "longbridge":
-        return "用法：/sync longbridge\n当前仅规划长桥美股持仓同步。A 股持仓以本地账本和人工对账为准。"
-    from src.longbridge_provider import format_longbridge_sync_proposal, sync_longbridge_positions
+    from datetime import date
 
-    try:
-        proposal = sync_longbridge_positions()
-    except RuntimeError as exc:
-        return str(exc)
-    return format_longbridge_sync_proposal(proposal)
+    clean_args = " ".join(args.strip().split())
+    target = clean_args.lower()
+    if target == "longbridge":
+        from src.longbridge_provider import format_longbridge_sync_proposal, sync_longbridge_positions
+
+        try:
+            proposal = sync_longbridge_positions()
+        except RuntimeError as exc:
+            return str(exc)
+        return format_longbridge_sync_proposal(proposal)
+
+    parts = target.split()
+    if len(parts) >= 2 and parts[0] == "longbridge" and parts[1] in {"dividend", "dividends", "income", "distribution", "distributions"}:
+        from src.longbridge_provider import format_longbridge_us_income_result, sync_longbridge_us_income_distributions
+
+        parsed = _parse_key_values(args)
+        try:
+            start = date.fromisoformat(parsed["start"]) if parsed.get("start") else None
+            end = date.fromisoformat(parsed["end"]) if parsed.get("end") else None
+            result = sync_longbridge_us_income_distributions(start=start, end=end)
+        except ValueError as exc:
+            return f"日期格式不对：{exc}。请使用 YYYY-MM-DD。"
+        except RuntimeError as exc:
+            return str(exc)
+        return format_longbridge_us_income_result(result)
+
+    return (
+        "用法：\n"
+        "/sync longbridge\n"
+        "/sync longbridge dividends [start=YYYY-MM-DD] [end=YYYY-MM-DD]\n"
+        "A 股持仓仍以本地账本、财报和公告为准。"
+    )
 
 
 def _handle_apply(args: str, chat_id: str) -> str:

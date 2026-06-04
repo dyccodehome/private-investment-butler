@@ -11,7 +11,12 @@ from src import communication_gate
 from src.app_config import get_config
 from src.init import RUNTIME_DIR
 from src.scheduler.config import SchedulerConfig, SchedulerJob, is_job_due, load_scheduler_config, run_key
-from src.scheduler.jobs import run_growth_daily_review_job, run_growth_weekly_review_job
+from src.scheduler.jobs import (
+    run_cash_anchor_cn_dividend_review_job,
+    run_cash_anchor_us_income_distribution_job,
+    run_growth_daily_review_job,
+    run_growth_weekly_review_job,
+)
 
 
 STATE_DIR = RUNTIME_DIR / "scheduler"
@@ -28,6 +33,10 @@ def run_job_once(job: SchedulerJob, *, chat_id: str | None = None, dry_run: bool
         result = run_growth_daily_review_job(job.market, chat_id=target_chat_id or None, dry_run=dry_run)
     elif job.job_type == "growth_weekly_review":
         result = run_growth_weekly_review_job(chat_id=target_chat_id or None, dry_run=dry_run)
+    elif job.job_type == "cash_anchor_cn_dividend_review":
+        result = run_cash_anchor_cn_dividend_review_job(chat_id=target_chat_id or None, dry_run=dry_run)
+    elif job.job_type == "cash_anchor_us_income_distribution_sync":
+        result = run_cash_anchor_us_income_distribution_job(chat_id=target_chat_id or None, dry_run=dry_run)
     else:
         raise ValueError(f"未知定时任务类型：{job.job_type}")
 

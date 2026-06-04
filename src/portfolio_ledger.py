@@ -7,8 +7,9 @@
 from __future__ import annotations
 
 import csv
+from collections import defaultdict
 from dataclasses import dataclass, asdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,8 @@ HOLDINGS_PATH = DATA_DIR / "holdings.csv"
 CAPITAL_FLOWS_PATH = DATA_DIR / "capital_flows.csv"
 PORTFOLIO_EVENTS_PATH = DATA_DIR / "portfolio_events.csv"
 DIVIDEND_PLAN_PATH = DATA_DIR / "dividend_plan.yaml"
+US_DISTRIBUTION_HISTORY_PATH = DATA_DIR / "us_distribution_history.csv"
+US_INCOME_SYMBOLS = {"QQQI", "QQQI.US", "XQQI", "XQQI.US", "TQQQ", "TQQQ.US"}
 
 
 @dataclass(frozen=True)
@@ -67,6 +70,20 @@ class PortfolioEvent:
 
 
 @dataclass(frozen=True)
+class USDistributionRecord:
+    """美元收益基金历史每份分配记录。"""
+
+    symbol: str
+    ex_date: str
+    payment_date: str
+    record_date: str
+    amount_per_share: float
+    currency: str
+    source: str
+    notes: str = ""
+
+
+@dataclass(frozen=True)
 class DividendPlan:
     """现金流执行计划的核心参数。"""
 
@@ -83,6 +100,7 @@ def build_portfolio_snapshot(as_of: date | None = None) -> dict[str, Any]:
     current_date = as_of or date.today()
     holdings = read_holdings()
     flows = read_capital_flows()
+    events = read_portfolio_events()
     plan = read_dividend_plan()
     positions = [_position_metrics(item) for item in holdings]
 
@@ -93,6 +111,8 @@ def build_portfolio_snapshot(as_of: date | None = None) -> dict[str, Any]:
     current_year_contribution = sum(
         flow.amount for flow in flows if _parse_year(flow.date) == current_date.year
     )
+    dividend_analysis = _build_dividend_analysis(holdings, positions, events, current_date, plan.currency)
+    currency_breakdown = _build_currency_breakdown(positions, flows, events, current_date)
 
     return {
         "as_of": current_date.isoformat(),
@@ -101,6 +121,7 @@ def build_portfolio_snapshot(as_of: date | None = None) -> dict[str, Any]:
             "capital_flows": str(CAPITAL_FLOWS_PATH),
             "portfolio_events": str(PORTFOLIO_EVENTS_PATH),
             "dividend_plan": str(DIVIDEND_PLAN_PATH),
+            "us_distribution_history": str(US_DISTRIBUTION_HISTORY_PATH),
         },
         "missing_files": _missing_data_files(),
         "plan": asdict(plan),
@@ -113,6 +134,17 @@ def build_portfolio_snapshot(as_of: date | None = None) -> dict[str, Any]:
             "yield_on_cost": _safe_ratio(gross_annual_dividend, total_cost),
             "current_yield": _safe_ratio(gross_annual_dividend, total_market_value),
             "net_yield_on_cost": _safe_ratio(net_annual_dividend, total_cost),
+            "currency_scope": "mixed" if currency_breakdown["is_mixed_currency"] else plan.currency,
+            "total_cost_by_currency": [
+                {"currency": item["currency"], "amount": item["total_cost"]}
+                for item in currency_breakdown["position_totals_by_currency"]
+            ],
+            "total_market_value_by_currency": [
+                {"currency": item["currency"], "amount": item["total_market_value"]}
+                for item in currency_breakdown["position_totals_by_currency"]
+            ],
+            "current_year_dividend_received": dividend_analysis["current_year_received"]["plan_currency_amount"],
+            "current_year_dividend_received_by_currency": dividend_analysis["current_year_received"]["total_by_currency"],
             "current_year_contribution": round(current_year_contribution, 2),
             "annual_contribution_progress": _safe_ratio(
                 current_year_contribution,
@@ -123,9 +155,13 @@ def build_portfolio_snapshot(as_of: date | None = None) -> dict[str, Any]:
                 2,
             ),
         },
+        "dividend_analysis": dividend_analysis,
+        "market_breakdown": _build_market_breakdown(positions),
+        "currency_breakdown": currency_breakdown,
+        "data_quality": _build_data_quality(holdings, events, current_date),
         "positions": positions,
         "capital_flows": [asdict(item) for item in flows],
-        "portfolio_events": [asdict(item) for item in read_portfolio_events()],
+        "portfolio_events": [asdict(item) for item in events],
         "template_files": {
             "holdings": str(TEMPLATE_DIR / "holdings.csv"),
             "capital_flows": str(TEMPLATE_DIR / "capital_flows.csv"),
@@ -145,13 +181,46 @@ def build_enriched_portfolio_snapshot(as_of: date | None = None) -> dict[str, An
         symbol = str(item.get("symbol") or "")
         if not symbol:
             continue
-        market_data[symbol] = fetch_market_data(symbol, market=str(item.get("market") or ""))
+        market_data[symbol] = _market_data_for_portfolio_snapshot(
+            fetch_market_data(symbol, market=str(item.get("market") or ""))
+        )
     enriched = dict(snapshot)
     enriched["market_data"] = market_data
+    enriched["market_data_summary"] = _build_market_data_summary(market_data)
+    enriched["exchange_rates"] = _fetch_exchange_rates_for_snapshot(snapshot)
+    valuation_positions = _positions_with_market_data(
+        list(enriched.get("positions") or []),
+        market_data,
+    )
+    if enriched["exchange_rates"].get("status") == "ok":
+        dividend_analysis = dict(enriched.get("dividend_analysis") or {})
+        dividend_analysis["portfolio_dividend_yield_estimate"] = _build_portfolio_dividend_yield_estimate(
+            valuation_positions,
+            dict(dividend_analysis.get("us_income_distribution_forecast") or {}),
+            base_currency=str(enriched.get("plan", {}).get("currency") or "CNY"),
+            fx_rates=list(enriched["exchange_rates"].get("rates") or []),
+            fx_source=str(enriched["exchange_rates"].get("source") or ""),
+        )
+        enriched["dividend_analysis"] = dividend_analysis
+    else:
+        dividend_analysis = dict(enriched.get("dividend_analysis") or {})
+        dividend_analysis["portfolio_dividend_yield_estimate"] = _build_portfolio_dividend_yield_estimate(
+            valuation_positions,
+            dict(dividend_analysis.get("us_income_distribution_forecast") or {}),
+        )
+        enriched["dividend_analysis"] = dividend_analysis
     enriched["market_data_policy"] = {
-        "source_rule": "CN uses yfinance; US uses Longbridge.",
-        "failure_policy": "If status is error, treat current quote/dividend as missing and state the data gap.",
-        "write_policy": "Read-only during analysis; do not overwrite holdings.csv automatically.",
+        "source_rule": "境内标的和美元标的分别走只读行情源。",
+        "failure_policy": "行情错误只影响最新价、动态股息率和均线，不能覆盖分红到账流水，也不能否定持仓账本里已经核验过的每股年分红。",
+        "cashflow_dividend_policy": (
+            "现金流收入不能使用行情源返回的股息字段。分红预估只能来自人工核验后的持仓账本、分红到账流水，"
+            "或企业财报、利润分配公告、权益分派实施公告等正式披露文件。"
+        ),
+        "write_policy": "分析期间只读，不自动覆盖持仓账本。",
+    }
+    enriched["data_quality"] = {
+        **dict(snapshot.get("data_quality") or {}),
+        "market_data": enriched["market_data_summary"],
     }
     return enriched
 
@@ -470,6 +539,7 @@ def record_dividend(
     amount: float,
     dividend_date: date | None = None,
     currency: str = "CNY",
+    source: str = "manual",
     notes: str = "",
 ) -> dict[str, Any]:
     """记录一次现金分红到账。"""
@@ -488,7 +558,7 @@ def record_dividend(
             price=0.0,
             amount=amount,
             currency=currency,
-            source="manual",
+            source=source,
             notes=notes,
         )
     )
@@ -497,6 +567,7 @@ def record_dividend(
         "symbol": clean_symbol,
         "amount": amount,
         "currency": currency,
+        "source": source,
         "event_path": str(PORTFOLIO_EVENTS_PATH),
     }
 
@@ -602,6 +673,7 @@ def format_snapshot(snapshot: dict[str, Any]) -> str:
     summary = snapshot["summary"]
     plan = snapshot["plan"]
     currency = plan["currency"]
+    yield_lines = _format_dividend_yield_estimate_lines(snapshot)
     return (
         "Cash Anchor 持仓快照：\n"
         f"- 持仓数量：{summary['holding_count']}\n"
@@ -609,11 +681,36 @@ def format_snapshot(snapshot: dict[str, Any]) -> str:
         f"- 当前市值：{_money(summary['total_market_value'], currency)}\n"
         f"- 预估税后年分红：{_money(summary['net_annual_dividend'], currency)}\n"
         f"- 成本税后股息率：{float(summary['net_yield_on_cost'] or 0):.2%}\n"
+        f"{yield_lines}"
         f"- 当前年投入：{_money(summary['current_year_contribution'], currency)}\n"
         f"- 投入目标进度：{float(summary['annual_contribution_progress'] or 0):.1%}\n"
         f"- 持仓账本：{snapshot['data_files']['holdings']}\n"
         f"- 事件账本：{snapshot['data_files']['portfolio_events']}"
     )
+
+
+def _format_dividend_yield_estimate_lines(snapshot: dict[str, Any]) -> str:
+    estimate = (
+        snapshot.get("dividend_analysis", {})
+        .get("portfolio_dividend_yield_estimate", {})
+    )
+    groups = estimate.get("by_market") or []
+    if not groups:
+        return ""
+    lines = []
+    for group in groups:
+        market = group.get("market") or "UNKNOWN"
+        currency = group.get("currency") or ""
+        lines.append(
+            f"- {market}综合股息率：{float(group.get('current_yield') or 0):.2%}"
+            f"（年化现金 {_money(group.get('estimated_annual_cash'), currency)}）"
+        )
+    total = estimate.get("portfolio_total") or {}
+    if total.get("status") == "ok":
+        lines.append(f"- 全组合综合股息率：{float(total.get('current_yield') or 0):.2%}")
+    elif total.get("status") == "requires_fx":
+        lines.append("- 全组合综合股息率：需先确认汇率，当前按币种分开展示。")
+    return "\n".join(lines) + "\n"
 
 
 def _write_holdings(holdings: list[Holding]) -> None:
@@ -710,6 +807,65 @@ def read_portfolio_events() -> list[PortfolioEvent]:
     ]
 
 
+def read_us_distribution_history() -> list[USDistributionRecord]:
+    """读取美元收益基金历史每份分配记录。"""
+
+    if not US_DISTRIBUTION_HISTORY_PATH.exists():
+        return []
+    rows = _read_csv(US_DISTRIBUTION_HISTORY_PATH)
+    return [
+        USDistributionRecord(
+            symbol=str(row.get("symbol") or "").strip().upper(),
+            ex_date=_normalize_date_text(row.get("ex_date")),
+            payment_date=_normalize_date_text(row.get("payment_date")),
+            record_date=_normalize_date_text(row.get("record_date")),
+            amount_per_share=_to_float(row.get("amount_per_share")),
+            currency=str(row.get("currency") or "USD").strip().upper(),
+            source=str(row.get("source") or "").strip(),
+            notes=str(row.get("notes") or "").strip(),
+        )
+        for row in rows
+        if str(row.get("symbol") or "").strip() and _to_float(row.get("amount_per_share")) > 0
+    ]
+
+
+def upsert_us_distribution_history(records: list[USDistributionRecord]) -> dict[str, Any]:
+    """写入美元收益基金历史分配记录，同一标的同一日期同一金额只保留一条。"""
+
+    if not records:
+        return {"created_count": 0, "updated_count": 0, "total_count": len(read_us_distribution_history())}
+    _ensure_cash_anchor_data_files()
+    existing = {
+        _distribution_record_key(item): item
+        for item in read_us_distribution_history()
+    }
+    created = 0
+    updated = 0
+    for raw in records:
+        item = USDistributionRecord(
+            symbol=raw.symbol.strip().upper(),
+            ex_date=_normalize_date_text(raw.ex_date),
+            payment_date=_normalize_date_text(raw.payment_date),
+            record_date=_normalize_date_text(raw.record_date),
+            amount_per_share=float(raw.amount_per_share),
+            currency=(raw.currency or "USD").strip().upper(),
+            source=raw.source.strip(),
+            notes=raw.notes.strip(),
+        )
+        key = _distribution_record_key(item)
+        if key in existing:
+            updated += 1
+        else:
+            created += 1
+        existing[key] = item
+    rows = sorted(
+        existing.values(),
+        key=lambda item: (item.symbol, _distribution_effective_date(item), item.amount_per_share),
+    )
+    _write_us_distribution_history(rows)
+    return {"created_count": created, "updated_count": updated, "total_count": len(rows)}
+
+
 def read_dividend_plan() -> DividendPlan:
     """读取 `data/dividend_plan.yaml`；旧版目标年分红字段会被忽略。"""
 
@@ -762,6 +918,11 @@ def _ensure_cash_anchor_data_files() -> None:
             "date,event_type,symbol,shares,price,amount,currency,source,notes\n",
             encoding="utf-8",
         )
+    if not US_DISTRIBUTION_HISTORY_PATH.exists():
+        US_DISTRIBUTION_HISTORY_PATH.write_text(
+            "symbol,ex_date,payment_date,record_date,amount_per_share,currency,source,notes\n",
+            encoding="utf-8",
+        )
 
 
 def _position_metrics(holding: Holding) -> dict[str, Any]:
@@ -782,6 +943,779 @@ def _position_metrics(holding: Holding) -> dict[str, Any]:
     }
 
 
+def _build_dividend_analysis(
+    holdings: list[Holding],
+    positions: list[dict[str, Any]],
+    events: list[PortfolioEvent],
+    current_date: date,
+    plan_currency: str,
+) -> dict[str, Any]:
+    current_year_dividends = [
+        item for item in events if item.event_type == "dividend" and _parse_year(item.date) == current_date.year
+    ]
+    all_dividend_events = [item for item in events if item.event_type == "dividend"]
+    gross_by_currency: defaultdict[str, float] = defaultdict(float)
+    net_by_currency: defaultdict[str, float] = defaultdict(float)
+    for position in positions:
+        currency = str(position.get("currency") or plan_currency)
+        gross_by_currency[currency] += float(position.get("gross_annual_dividend") or 0)
+        net_by_currency[currency] += float(position.get("net_annual_dividend") or 0)
+
+    received_by_currency: defaultdict[str, float] = defaultdict(float)
+    received_by_symbol: dict[tuple[str, str], dict[str, Any]] = {}
+    for event in current_year_dividends:
+        received_by_currency[event.currency] += event.amount
+        key = (event.symbol, event.currency)
+        row = received_by_symbol.setdefault(
+            key,
+            {
+                "symbol": event.symbol,
+                "currency": event.currency,
+                "amount": 0.0,
+                "event_count": 0,
+                "latest_date": event.date,
+            },
+        )
+        row["amount"] += event.amount
+        row["event_count"] += 1
+        if event.date > str(row["latest_date"]):
+            row["latest_date"] = event.date
+
+    missing_annual_dividend = [
+        _holding_identity(item)
+        for item in holdings
+        if item.shares > 0 and item.annual_dividend_per_share <= 0
+    ]
+    has_forecast = any(amount > 0 for amount in gross_by_currency.values())
+    has_received = bool(current_year_dividends)
+    if not holdings:
+        status = "missing"
+    elif not missing_annual_dividend and has_forecast:
+        status = "ok"
+    elif has_forecast or has_received:
+        status = "partial"
+    else:
+        status = "missing"
+
+    answer_constraints: list[str] = []
+    if missing_annual_dividend:
+        answer_constraints.append("持仓账本中部分或全部持仓缺少财报口径的每股年分红，只能统计已到账分红，不能完整估算全年预期分红。")
+    if not current_year_dividends:
+        answer_constraints.append("分红到账流水中今年没有分红事件，本地账本未记录今年分红到账。")
+
+    us_income_distribution_forecast = _build_us_income_distribution_forecast(
+        holdings,
+        current_date=current_date,
+    )
+    portfolio_dividend_yield_estimate = _build_portfolio_dividend_yield_estimate(
+        positions,
+        us_income_distribution_forecast,
+    )
+    if us_income_distribution_forecast["positions"]:
+        answer_constraints.append("QQQI/XQQI/TQQQ 等美元收益基金不能使用固定每股年分红，只能区分已到账分配和基于历史分配的滚动预测。")
+
+    return {
+        "status": status,
+        "basis": {
+            "forecast_source": "持仓账本里的每股年分红；写入前必须经过企业财报、利润分配公告或基金分配文件核验。",
+            "received_source": "分红到账流水里的分红事件。",
+            "accepted_source_order": [
+                "实际到账的分红流水",
+                "从企业财报或利润分配公告核验后写入持仓账本的每股年分红",
+                "已披露的企业财报、利润分配公告、权益分派实施公告或基金分配文件",
+            ],
+            "rejected_sources": [
+                "行情源返回的股息字段",
+                "凭记忆估算的股息率或大概值",
+                "把备兑基金上一期分配机械外推成固定年分红",
+            ],
+            "plan_file_role": "年度投入计划只存本金投入目标，不是逐标的分红表。",
+        },
+        "forecast_from_holdings": {
+            "gross_annual_dividend_by_currency": _amount_rows(gross_by_currency),
+            "net_annual_dividend_by_currency": _amount_rows(net_by_currency),
+            "missing_annual_dividend_positions": missing_annual_dividend,
+            "filled_position_count": len(holdings) - len(missing_annual_dividend),
+            "missing_position_count": len(missing_annual_dividend),
+        },
+        "current_year_received": {
+            "year": current_date.year,
+            "event_count": len(current_year_dividends),
+            "total_by_currency": _amount_rows(received_by_currency),
+            "plan_currency": plan_currency,
+            "plan_currency_amount": round(received_by_currency.get(plan_currency, 0.0), 2),
+            "by_symbol": _rounded_rows(received_by_symbol.values(), amount_keys={"amount"}),
+            "events": [asdict(item) for item in current_year_dividends],
+        },
+        "us_income_distribution_forecast": us_income_distribution_forecast,
+        "portfolio_dividend_yield_estimate": portfolio_dividend_yield_estimate,
+        "all_time_dividend_event_count": len(all_dividend_events),
+        "answer_constraints": answer_constraints,
+        "repair_actions": [
+            "用 /dividend symbol=<code> amount=<amount> date=YYYY-MM-DD 记录已经到账的现金分红。",
+            "核对公告、年报或基金分配文件后，用 /holding symbol=<code> ... dividend=<per_share> 更新标的每股年分红预估。",
+            "用 /sync longbridge dividends 同步美元收益基金的到账分配和历史分配记录。",
+        ],
+    }
+
+
+def _build_portfolio_dividend_yield_estimate(
+    positions: list[dict[str, Any]],
+    us_income_distribution_forecast: dict[str, Any],
+    *,
+    base_currency: str = "CNY",
+    fx_rates: list[dict[str, Any]] | None = None,
+    fx_source: str = "",
+) -> dict[str, Any]:
+    us_forecast_by_symbol = {
+        _canonical_us_symbol(str(item.get("symbol") or "")): item
+        for item in us_income_distribution_forecast.get("positions", [])
+    }
+    rows: list[dict[str, Any]] = []
+    missing: list[dict[str, Any]] = []
+    for position in positions:
+        symbol = str(position.get("symbol") or "")
+        market = _market_group(str(position.get("market") or ""), symbol)
+        currency = str(position.get("currency") or "")
+        market_value = float(position.get("market_value") or 0)
+        cost_basis = float(position.get("cost_basis") or 0)
+        if _is_us_income_symbol(symbol):
+            selected_window, selected = _select_us_income_forecast_window(
+                us_forecast_by_symbol.get(_canonical_us_symbol(symbol))
+            )
+            estimated_cash = float(selected.get("estimated_annual_cash") or 0) if selected else 0.0
+            basis = _us_income_window_label(selected_window)
+        else:
+            selected_window = ""
+            estimated_cash = float(position.get("net_annual_dividend") or 0)
+            basis = "持仓账本中的财报/公告口径每股年分红"
+
+        row = {
+            "symbol": symbol,
+            "name": position.get("name") or "",
+            "market": market,
+            "currency": currency,
+            "market_value": round(market_value, 2),
+            "cost_basis": round(cost_basis, 2),
+            "estimated_annual_cash": round(estimated_cash, 2),
+            "current_yield": _safe_ratio(estimated_cash, market_value),
+            "yield_on_cost": _safe_ratio(estimated_cash, cost_basis),
+            "basis": basis,
+        }
+        if selected_window:
+            row["selected_window"] = selected_window
+        if estimated_cash > 0 and market_value > 0:
+            rows.append(row)
+        else:
+            missing.append(row)
+
+    return {
+        "policy": "A股按持仓账本每股年分红估算；美股备兑收益基金按历史分配滚动估算；跨币种总收益率需要明确汇率后才能合并。",
+        "by_market": _yield_groups(rows, group_keys=("market", "currency")),
+        "by_currency": _yield_groups(rows, group_keys=("currency",)),
+        "portfolio_total": _portfolio_yield_total(
+            rows,
+            base_currency=base_currency,
+            fx_rates=fx_rates or [],
+            fx_source=fx_source,
+        ),
+        "positions": rows,
+        "missing_positions": missing,
+    }
+
+
+def _select_us_income_forecast_window(item: dict[str, Any] | None) -> tuple[str, dict[str, Any] | None]:
+    if not item:
+        return "", None
+    windows = [
+        ("trailing_12m", item.get("trailing_12m") or {}, 10),
+        ("trailing_6m", item.get("trailing_6m") or {}, 3),
+        ("trailing_3m", item.get("trailing_3m") or {}, 1),
+    ]
+    for name, metrics, min_count in windows:
+        if int(metrics.get("record_count") or 0) >= min_count and float(metrics.get("estimated_annual_cash") or 0) > 0:
+            return name, metrics
+    return "", None
+
+
+def _us_income_window_label(window: str) -> str:
+    labels = {
+        "trailing_12m": "美元收益基金近12个月历史分配",
+        "trailing_6m": "美元收益基金近6个月滚动年化分配",
+        "trailing_3m": "美元收益基金近3个月滚动年化分配",
+    }
+    return labels.get(window, "美元收益基金历史分配不足，暂不估算")
+
+
+def _yield_groups(rows: list[dict[str, Any]], *, group_keys: tuple[str, ...]) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, ...], dict[str, Any]] = {}
+    for row in rows:
+        key = tuple(str(row.get(item) or "") for item in group_keys)
+        group = groups.setdefault(
+            key,
+            {
+                **{group_key: key[index] for index, group_key in enumerate(group_keys)},
+                "position_count": 0,
+                "symbols": [],
+                "market_value": 0.0,
+                "cost_basis": 0.0,
+                "estimated_annual_cash": 0.0,
+            },
+        )
+        group["position_count"] += 1
+        group["symbols"].append(str(row.get("symbol") or ""))
+        group["market_value"] += float(row.get("market_value") or 0)
+        group["cost_basis"] += float(row.get("cost_basis") or 0)
+        group["estimated_annual_cash"] += float(row.get("estimated_annual_cash") or 0)
+
+    result = []
+    for group in groups.values():
+        estimated_cash = float(group["estimated_annual_cash"] or 0)
+        market_value = float(group["market_value"] or 0)
+        cost_basis = float(group["cost_basis"] or 0)
+        result.append(
+            {
+                **group,
+                "market_value": round(market_value, 2),
+                "cost_basis": round(cost_basis, 2),
+                "estimated_annual_cash": round(estimated_cash, 2),
+                "current_yield": _safe_ratio(estimated_cash, market_value),
+                "yield_on_cost": _safe_ratio(estimated_cash, cost_basis),
+            }
+        )
+    return sorted(result, key=lambda item: tuple(str(item.get(key) or "") for key in group_keys))
+
+
+def _portfolio_yield_total(
+    rows: list[dict[str, Any]],
+    *,
+    base_currency: str,
+    fx_rates: list[dict[str, Any]],
+    fx_source: str,
+) -> dict[str, Any]:
+    currencies = sorted({str(item.get("currency") or "") for item in rows if item.get("currency")})
+    by_currency = _yield_groups(rows, group_keys=("currency",))
+    if len(currencies) == 1:
+        row = by_currency[0] if by_currency else {}
+        return {
+            "status": "ok",
+            "currency": currencies[0],
+            "market_value": row.get("market_value", 0.0),
+            "cost_basis": row.get("cost_basis", 0.0),
+            "estimated_annual_cash": row.get("estimated_annual_cash", 0.0),
+            "current_yield": row.get("current_yield", 0.0),
+            "yield_on_cost": row.get("yield_on_cost", 0.0),
+        }
+    converted_market_value = 0.0
+    converted_cost_basis = 0.0
+    converted_cash = 0.0
+    missing_rates: list[str] = []
+    for row in by_currency:
+        currency = str(row.get("currency") or "")
+        market_value = _convert_currency_amount(float(row.get("market_value") or 0), currency, base_currency, fx_rates)
+        cost_basis = _convert_currency_amount(float(row.get("cost_basis") or 0), currency, base_currency, fx_rates)
+        annual_cash = _convert_currency_amount(float(row.get("estimated_annual_cash") or 0), currency, base_currency, fx_rates)
+        if market_value is None or cost_basis is None or annual_cash is None:
+            missing_rates.append(currency)
+            continue
+        converted_market_value += market_value
+        converted_cost_basis += cost_basis
+        converted_cash += annual_cash
+    if not missing_rates and converted_market_value > 0:
+        return {
+            "status": "ok",
+            "currency": base_currency,
+            "fx_source": fx_source or "exchange_rates",
+            "market_value": round(converted_market_value, 2),
+            "cost_basis": round(converted_cost_basis, 2),
+            "estimated_annual_cash": round(converted_cash, 2),
+            "current_yield": _safe_ratio(converted_cash, converted_market_value),
+            "yield_on_cost": _safe_ratio(converted_cash, converted_cost_basis),
+            "by_currency": by_currency,
+        }
+    return {
+        "status": "requires_fx",
+        "reason": "组合同时包含多个币种；没有明确汇率来源时，不合并成单一综合股息率。",
+        "missing_rate_currencies": sorted(set(missing_rates or currencies)),
+        "by_currency": by_currency,
+    }
+
+
+def _convert_currency_amount(
+    amount: float,
+    from_currency: str,
+    to_currency: str,
+    fx_rates: list[dict[str, Any]],
+) -> float | None:
+    source = from_currency.strip().upper()
+    target = to_currency.strip().upper()
+    if source == target:
+        return amount
+    for row in fx_rates:
+        base = str(row.get("base_currency") or "").strip().upper()
+        other = str(row.get("other_currency") or "").strip().upper()
+        rate = _to_float(row.get("average_rate"))
+        if rate <= 0:
+            continue
+        if base == target and other == source:
+            return amount * rate
+        if base == source and other == target:
+            return amount / rate
+    return None
+
+
+def _build_us_income_distribution_forecast(
+    holdings: list[Holding],
+    *,
+    current_date: date,
+) -> dict[str, Any]:
+    history = read_us_distribution_history()
+    rows: list[dict[str, Any]] = []
+    totals: dict[str, defaultdict[str, float]] = {
+        "trailing_3m": defaultdict(float),
+        "trailing_6m": defaultdict(float),
+        "trailing_12m": defaultdict(float),
+    }
+    for holding in holdings:
+        if holding.shares <= 0 or not _is_us_income_symbol(holding.symbol):
+            continue
+        records = [
+            item
+            for item in history
+            if _canonical_us_symbol(item.symbol) == _canonical_us_symbol(holding.symbol)
+            and _distribution_effective_date_value(item) is not None
+            and _distribution_effective_date_value(item) <= current_date
+        ]
+        records.sort(key=lambda item: _distribution_effective_date(item))
+        windows = {
+            "trailing_3m": _distribution_window_metrics(holding, records, current_date=current_date, days=92),
+            "trailing_6m": _distribution_window_metrics(holding, records, current_date=current_date, days=183),
+            "trailing_12m": _distribution_window_metrics(holding, records, current_date=current_date, days=366),
+        }
+        for window_name, metrics in windows.items():
+            totals[window_name][holding.currency] += float(metrics.get("estimated_annual_cash") or 0)
+        latest = records[-1] if records else None
+        row = {
+            "symbol": holding.symbol,
+            "name": holding.name,
+            "currency": holding.currency,
+            "shares": holding.shares,
+            "history_record_count": len(records),
+            "latest_distribution": (
+                {
+                    "amount_per_share": round(latest.amount_per_share, 4),
+                    "ex_date": latest.ex_date,
+                    "payment_date": latest.payment_date,
+                    "record_date": latest.record_date,
+                    "source": latest.source,
+                }
+                if latest
+                else None
+            ),
+            "trailing_3m": windows["trailing_3m"],
+            "trailing_6m": windows["trailing_6m"],
+            "trailing_12m": windows["trailing_12m"],
+            "status": "ok" if windows["trailing_12m"]["record_count"] >= 6 else "insufficient_history" if records else "missing_history",
+        }
+        rows.append(row)
+
+    return {
+        "policy": (
+            "美元备兑收益基金的分配不是固定股息。已到账金额只看分红流水；未来现金流只能用历史每份分配做滚动预测。"
+        ),
+        "history_file": str(US_DISTRIBUTION_HISTORY_PATH),
+        "positions": rows,
+        "estimated_annual_cash_by_currency": {
+            key: _amount_rows(value)
+            for key, value in totals.items()
+        },
+    }
+
+
+def _distribution_window_metrics(
+    holding: Holding,
+    records: list[USDistributionRecord],
+    *,
+    current_date: date,
+    days: int,
+) -> dict[str, Any]:
+    start = current_date - timedelta(days=days)
+    selected = [
+        item
+        for item in records
+        if (effective_date := _distribution_effective_date_value(item)) is not None
+        and start < effective_date <= current_date
+    ]
+    amount_per_share = sum(item.amount_per_share for item in selected)
+    annualized_per_share = amount_per_share * 365 / days if days > 0 else 0.0
+    estimated_cash = annualized_per_share * holding.shares
+    return {
+        "window_days": days,
+        "record_count": len(selected),
+        "amount_per_share": round(amount_per_share, 4),
+        "annualized_per_share": round(annualized_per_share, 4),
+        "estimated_annual_cash": round(estimated_cash, 2),
+        "yield_on_cost": _safe_ratio(annualized_per_share, holding.cost_price),
+        "current_yield": _safe_ratio(annualized_per_share, holding.current_price),
+    }
+
+
+def _build_market_breakdown(positions: list[dict[str, Any]]) -> dict[str, Any]:
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
+    for position in positions:
+        market = _market_group(str(position.get("market") or ""), str(position.get("symbol") or ""))
+        currency = str(position.get("currency") or "")
+        key = (market, currency)
+        row = groups.setdefault(
+            key,
+            {
+                "market": market,
+                "currency": currency,
+                "holding_count": 0,
+                "symbols": [],
+                "total_cost": 0.0,
+                "total_market_value": 0.0,
+                "gross_annual_dividend": 0.0,
+                "net_annual_dividend": 0.0,
+            },
+        )
+        row["holding_count"] += 1
+        row["symbols"].append(str(position.get("symbol") or ""))
+        row["total_cost"] += float(position.get("cost_basis") or 0)
+        row["total_market_value"] += float(position.get("market_value") or 0)
+        row["gross_annual_dividend"] += float(position.get("gross_annual_dividend") or 0)
+        row["net_annual_dividend"] += float(position.get("net_annual_dividend") or 0)
+    rows = _rounded_rows(groups.values(), amount_keys={"total_cost", "total_market_value", "gross_annual_dividend", "net_annual_dividend"})
+    return {
+        "groups": sorted(rows, key=lambda item: (str(item["market"]), str(item["currency"]))),
+        "markets_present": sorted({str(item["market"]) for item in rows}),
+        "scope_policy": "境内红利问题只回答 A 股和港股分组；美元收益持仓除非用户要求现金锚点总览，否则单独归入美元收益框架。",
+    }
+
+
+def _build_currency_breakdown(
+    positions: list[dict[str, Any]],
+    flows: list[CapitalFlow],
+    events: list[PortfolioEvent],
+    current_date: date,
+) -> dict[str, Any]:
+    position_totals: dict[str, dict[str, Any]] = {}
+    for position in positions:
+        currency = str(position.get("currency") or "")
+        row = position_totals.setdefault(
+            currency,
+            {
+                "currency": currency,
+                "holding_count": 0,
+                "total_cost": 0.0,
+                "total_market_value": 0.0,
+                "gross_annual_dividend": 0.0,
+                "net_annual_dividend": 0.0,
+            },
+        )
+        row["holding_count"] += 1
+        row["total_cost"] += float(position.get("cost_basis") or 0)
+        row["total_market_value"] += float(position.get("market_value") or 0)
+        row["gross_annual_dividend"] += float(position.get("gross_annual_dividend") or 0)
+        row["net_annual_dividend"] += float(position.get("net_annual_dividend") or 0)
+
+    contributions: defaultdict[str, float] = defaultdict(float)
+    dividends: defaultdict[str, float] = defaultdict(float)
+    for flow in flows:
+        if _parse_year(flow.date) == current_date.year:
+            contributions[flow.currency] += flow.amount
+    for event in events:
+        if event.event_type == "dividend" and _parse_year(event.date) == current_date.year:
+            dividends[event.currency] += event.amount
+
+    currencies = sorted(currency for currency in position_totals if currency)
+    return {
+        "position_currencies": currencies,
+        "is_mixed_currency": len(currencies) > 1,
+        "position_totals_by_currency": sorted(
+            _rounded_rows(position_totals.values(), amount_keys={"total_cost", "total_market_value", "gross_annual_dividend", "net_annual_dividend"}),
+            key=lambda item: str(item["currency"]),
+        ),
+        "current_year_contribution_by_currency": _amount_rows(contributions),
+        "current_year_dividend_received_by_currency": _amount_rows(dividends),
+        "aggregation_policy": "没有明确汇率来源时，不把跨币种成本、市值或分红直接合并成人民币。",
+    }
+
+
+def _fetch_exchange_rates_for_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    currencies = list(
+        (snapshot.get("currency_breakdown") or {}).get("position_currencies") or []
+    )
+    if len(currencies) <= 1:
+        return {
+            "status": "not_needed",
+            "source": "none",
+            "rates": [],
+        }
+    try:
+        from src.longbridge_provider import fetch_longbridge_exchange_rates
+
+        rates = fetch_longbridge_exchange_rates()
+    except Exception as exc:
+        return {
+            "status": "error",
+            "source": "longbridge_exchange_rate",
+            "rates": [],
+            "error": str(exc),
+        }
+    return {
+        "status": "ok",
+        "source": "longbridge_exchange_rate",
+        "rates": [asdict(item) for item in rates],
+    }
+
+
+def _build_data_quality(
+    holdings: list[Holding],
+    events: list[PortfolioEvent],
+    current_date: date,
+) -> dict[str, Any]:
+    pending_quote_symbols = [
+        _holding_identity(item)
+        for item in holdings
+        if "current_price=pending_quote" in item.notes
+    ]
+    missing_annual_dividend_symbols = [
+        _holding_identity(item)
+        for item in holdings
+        if item.shares > 0 and item.annual_dividend_per_share <= 0
+    ]
+    duplicate_groups = _duplicate_symbol_groups(holdings)
+    currencies = sorted({item.currency for item in holdings if item.currency})
+    current_year_dividend_count = sum(
+        1 for item in events if item.event_type == "dividend" and _parse_year(item.date) == current_date.year
+    )
+    warnings: list[str] = []
+    if pending_quote_symbols:
+        warnings.append("当前价待查询只影响最新价、动态股息率和 MA120，不影响已到账分红流水统计。")
+    if missing_annual_dividend_symbols:
+        warnings.append("每股年分红缺失会影响全年预估分红和股息率计算，但不能覆盖 portfolio_events 中的实际到账事实。")
+    if len(currencies) > 1:
+        warnings.append("持仓包含多个币种，不能把成本、市值或分红直接汇总为单一 RMB 金额。")
+    if duplicate_groups:
+        warnings.append("发现同一代码的带后缀/不带后缀重复行，分析前应提示人工确认是否需要合并。")
+    return {
+        "status": "has_gaps" if warnings else "ok",
+        "pending_quote_symbols": pending_quote_symbols,
+        "missing_annual_dividend_symbols": missing_annual_dividend_symbols,
+        "duplicate_symbol_groups": duplicate_groups,
+        "position_currencies": currencies,
+        "current_year_dividend_event_count": current_year_dividend_count,
+        "warnings": warnings,
+    }
+
+
+def _build_market_data_summary(market_data: dict[str, Any]) -> dict[str, Any]:
+    status_counts: defaultdict[str, int] = defaultdict(int)
+    error_symbols: list[dict[str, str]] = []
+    quote_missing_symbols: list[str] = []
+    dividend_fields_ignored_symbols: list[str] = []
+    for symbol, payload in market_data.items():
+        if not isinstance(payload, dict):
+            status_counts["unknown"] += 1
+            continue
+        status = str(payload.get("status") or "unknown")
+        status_counts[status] += 1
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        if status == "error":
+            error_symbols.append({"symbol": symbol, "error": str(payload.get("error") or "")})
+        if data.get("price_status") == "missing":
+            quote_missing_symbols.append(symbol)
+        if data.get("cashflow_dividend_usable") is False:
+            dividend_fields_ignored_symbols.append(symbol)
+    return {
+        "status_counts": dict(sorted(status_counts.items())),
+        "error_symbols": error_symbols,
+        "quote_missing_symbols": sorted(quote_missing_symbols),
+        "dividend_fields_ignored_symbols": sorted(dividend_fields_ignored_symbols),
+        "quote_dependent_metrics": ["latest_price", "MA120", "unrealized_pnl_from_latest_quote"],
+        "ledger_dependent_metrics": ["今年已到账分红", "持仓账本里的每股年分红预估"],
+    }
+
+
+def _positions_with_market_data(
+    positions: list[dict[str, Any]],
+    market_data: dict[str, Any],
+) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for position in positions:
+        row = dict(position)
+        symbol = str(row.get("symbol") or "")
+        quote = market_data.get(symbol) or market_data.get(_canonical_symbol(symbol))
+        data = quote.get("data") if isinstance(quote, dict) and isinstance(quote.get("data"), dict) else {}
+        current_price = _to_float(data.get("current_price"))
+        shares = _to_float(row.get("shares"))
+        if current_price > 0 and shares > 0:
+            market_value = shares * current_price
+            estimated_cash = _to_float(row.get("net_annual_dividend") or row.get("gross_annual_dividend"))
+            row["current_price"] = current_price
+            row["market_value"] = round(market_value, 2)
+            row["current_yield"] = _safe_ratio(estimated_cash, market_value)
+            row["quote_source_for_yield"] = data.get("quote_source") or quote.get("source") or ""
+        result.append(row)
+    return result
+
+
+def _market_data_for_portfolio_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep quote data, but prevent quote-provider dividends from becoming cash-flow facts."""
+
+    clean = dict(payload)
+    data = dict(clean.get("data") or {}) if isinstance(clean.get("data"), dict) else {}
+    ignored_fields = []
+    for key in ("annual_dividend_per_share", "dividend_status"):
+        if key in data:
+            ignored_fields.append(key)
+            data.pop(key, None)
+    data["cashflow_dividend_usable"] = False
+    data["dividend_policy"] = "行情源股息字段不能用于现金锚点收入计算；必须使用企业披露文件、持仓账本或分红到账流水。"
+    if ignored_fields:
+        data["ignored_dividend_fields"] = ignored_fields
+    clean["data"] = data
+    return clean
+
+
+def _holding_identity(holding: Holding) -> dict[str, Any]:
+    return {
+        "symbol": holding.symbol,
+        "name": holding.name,
+        "market": holding.market,
+        "currency": holding.currency,
+        "shares": holding.shares,
+    }
+
+
+def _duplicate_symbol_groups(holdings: list[Holding]) -> list[dict[str, Any]]:
+    groups: defaultdict[str, list[Holding]] = defaultdict(list)
+    for holding in holdings:
+        groups[_canonical_symbol(holding.symbol)].append(holding)
+    duplicates = []
+    for canonical, rows in sorted(groups.items()):
+        if len(rows) > 1:
+            duplicates.append(
+                {
+                    "canonical_symbol": canonical,
+                    "positions": [_holding_identity(item) for item in rows],
+                }
+            )
+    return duplicates
+
+
+def _canonical_symbol(symbol: str) -> str:
+    text = symbol.strip().upper()
+    for suffix in (".SH", ".SZ", ".SS", ".US", ".HK"):
+        if text.endswith(suffix):
+            return text[: -len(suffix)]
+    return text
+
+
+def _canonical_us_symbol(symbol: str) -> str:
+    text = symbol.strip().upper()
+    base = text.split(".", 1)[0]
+    return f"{base}.US"
+
+
+def _is_us_income_symbol(symbol: str) -> bool:
+    text = symbol.strip().upper()
+    return text in US_INCOME_SYMBOLS or _canonical_us_symbol(text) in US_INCOME_SYMBOLS
+
+
+def _market_group(market: str, symbol: str) -> str:
+    clean_market = market.strip().upper()
+    clean_symbol = symbol.strip().upper()
+    if clean_market in {"US", "USA"} or clean_symbol.endswith(".US"):
+        return "US"
+    if clean_market in {"CN", "A", "ASHARE", "A_SHARE", "A股"} or clean_symbol.endswith((".SH", ".SZ", ".SS")):
+        return "A股"
+    if clean_market in {"HK", "港股"} or clean_symbol.endswith(".HK"):
+        return "HK"
+    return market.strip() or "UNKNOWN"
+
+
+def _amount_rows(amounts: dict[str, float]) -> list[dict[str, Any]]:
+    return [
+        {"currency": currency, "amount": round(amount, 2)}
+        for currency, amount in sorted(amounts.items())
+        if currency
+    ]
+
+
+def _rounded_rows(rows: Any, *, amount_keys: set[str]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        clean = dict(row)
+        for key in amount_keys:
+            if key in clean:
+                clean[key] = round(float(clean[key] or 0), 2)
+        result.append(clean)
+    return result
+
+
+def _write_us_distribution_history(records: list[USDistributionRecord]) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with US_DISTRIBUTION_HISTORY_PATH.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(
+            file,
+            fieldnames=[
+                "symbol",
+                "ex_date",
+                "payment_date",
+                "record_date",
+                "amount_per_share",
+                "currency",
+                "source",
+                "notes",
+            ],
+        )
+        writer.writeheader()
+        for item in records:
+            row = asdict(item)
+            row["amount_per_share"] = _format_decimal(float(row["amount_per_share"]), 6)
+            writer.writerow(row)
+
+
+def _distribution_record_key(item: USDistributionRecord) -> tuple[str, str, str, str, float, str]:
+    return (
+        _canonical_us_symbol(item.symbol),
+        _normalize_date_text(item.ex_date),
+        _normalize_date_text(item.payment_date),
+        _normalize_date_text(item.record_date),
+        round(float(item.amount_per_share), 6),
+        item.currency.upper(),
+    )
+
+
+def _distribution_effective_date(item: USDistributionRecord) -> str:
+    return item.payment_date or item.ex_date or item.record_date or ""
+
+
+def _distribution_effective_date_value(item: USDistributionRecord) -> date | None:
+    value = _distribution_effective_date(item)
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _normalize_date_text(value: Any) -> str:
+    text = str(value or "").strip().replace(".", "-").replace("/", "-")
+    if not text:
+        return ""
+    parts = text.split()
+    text = parts[0]
+    try:
+        parsed = date.fromisoformat(text)
+    except ValueError:
+        return text
+    return parsed.isoformat()
+
+
 def _read_csv(path: Path) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8-sig", newline="") as file:
         return list(csv.DictReader(file))
@@ -799,7 +1733,13 @@ def _read_simple_key_value_yaml(path: Path) -> dict[str, str]:
 
 
 def _missing_data_files() -> list[str]:
-    files = [HOLDINGS_PATH, CAPITAL_FLOWS_PATH, PORTFOLIO_EVENTS_PATH, DIVIDEND_PLAN_PATH]
+    files = [
+        HOLDINGS_PATH,
+        CAPITAL_FLOWS_PATH,
+        PORTFOLIO_EVENTS_PATH,
+        DIVIDEND_PLAN_PATH,
+        US_DISTRIBUTION_HISTORY_PATH,
+    ]
     return [str(path) for path in files if not path.exists()]
 
 

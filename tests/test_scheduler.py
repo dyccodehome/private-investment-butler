@@ -92,8 +92,38 @@ scheduler:
         ) as review_growth_daily, patch("src.scheduler.runner.communication_gate.send") as send:
             reply = run_job_once(job, dry_run=True)
 
-        self.assertIn("[dry-run]", reply)
+        self.assertIn("试运行", reply)
         review_growth_daily.assert_not_called()
+        send.assert_not_called()
+
+    def test_cash_anchor_dividend_review_job_dry_run(self) -> None:
+        config = load_scheduler_config()
+        job = _job(config, "cash_anchor_cn_dividend_review")
+        fake_config = Mock()
+        fake_config.messaging.return_value.default_chat_id = "oc_test"
+
+        with patch("src.scheduler.runner.get_config", return_value=fake_config), patch(
+            "src.scheduler.jobs.review_cn_dividend_disclosures"
+        ) as review_cn_dividend_disclosures, patch("src.scheduler.runner.communication_gate.send") as send:
+            reply = run_job_once(job, dry_run=True)
+
+        self.assertIn("现金锚点境内红利财报核验", reply)
+        review_cn_dividend_disclosures.assert_not_called()
+        send.assert_not_called()
+
+    def test_cash_anchor_us_income_distribution_job_dry_run(self) -> None:
+        config = load_scheduler_config()
+        job = _job(config, "cash_anchor_us_income_distribution_sync")
+        fake_config = Mock()
+        fake_config.messaging.return_value.default_chat_id = "oc_test"
+
+        with patch("src.scheduler.runner.get_config", return_value=fake_config), patch(
+            "src.scheduler.jobs.sync_longbridge_us_income_distributions"
+        ) as sync_longbridge_us_income_distributions, patch("src.scheduler.runner.communication_gate.send") as send:
+            reply = run_job_once(job, dry_run=True)
+
+        self.assertIn("美元收益分配同步", reply)
+        sync_longbridge_us_income_distributions.assert_not_called()
         send.assert_not_called()
 
     def test_failed_job_is_logged_and_sends_error_summary(self) -> None:

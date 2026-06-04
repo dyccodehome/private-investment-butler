@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from src.communication_gate import _build_interactive_card
+from src.communication_gate import _build_interactive_card, _build_post_content
 
 
 class CommunicationGateTest(unittest.TestCase):
@@ -23,6 +23,13 @@ class CommunicationGateTest(unittest.TestCase):
 
         self.assertEqual(button["value"], expected_value)
         self.assertEqual(button["behaviors"], [{"type": "callback", "value": expected_value}])
+
+    def test_post_content_uses_markdown_block(self) -> None:
+        content = _build_post_content("**结论**\n- 先看到账流水")
+
+        block = content["zh_cn"]["content"][0][0]
+        self.assertEqual(block["tag"], "md")
+        self.assertIn("先看到账流水", block["text"])
 
 
 if __name__ == "__main__":

@@ -121,6 +121,8 @@ def append_decision_to_dossier(state: AgentState) -> Path | None:
             "user_query": state.user_input,
             "context_bundle_id": state.context_bundle_id,
             "disclosed_skills": [item.skill_name for item in state.disclosed_data],
+            "output_contract": state.output_contract,
+            "decision_snapshot": state.decision_snapshot,
             "agent_proposal": state.draft_decision,
             "audit_signal": state.audit_signal,
             "final_reply": state.final_answer,
@@ -200,7 +202,6 @@ def extract_symbol(text: str) -> str | None:
     patterns = [
         r"\b[A-Z]{1,5}(?:\.[A-Z]{1,3})?\b",
         r"\b\d{6}(?:\.(?:SH|SZ|SS))?\b",
-        r"\b\d{4,5}\.HK\b",
     ]
     for pattern in patterns:
         match = re.search(pattern, text.upper())
