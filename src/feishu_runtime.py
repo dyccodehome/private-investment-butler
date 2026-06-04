@@ -21,6 +21,7 @@ from src.knowledge_absorber import (
     format_patch_proposal_for_user,
     mark_patch_proposal,
     parse_absorb_args,
+    resolve_absorb_target,
     run_knowledge_absorption,
     start_patch_discussion,
 )
@@ -213,7 +214,7 @@ def _run_absorb_background(chat_id: str, framework_id: str, source_text: str) ->
     save_pending_action(
         chat_id=chat_id,
         action_id=action_id,
-        framework_id=framework_id,
+        framework_id=_storage_framework_id(proposal.framework_id or framework_id),
         reason=proposal.patch_id,
     )
     communication_gate.send_card(
@@ -231,17 +232,18 @@ def _run_absorb_background(chat_id: str, framework_id: str, source_text: str) ->
 def _handle_patch_callback(action: str, chat_id: str, framework_id: str | None, patch_id: str) -> None:
     """处理宪法补丁审批按钮。"""
 
-    if not framework_id:
+    storage_framework_id = _storage_framework_id(framework_id)
+    if not storage_framework_id:
         communication_gate.send(chat_id, "补丁审批失败：缺少 framework_id。")
         return
     try:
         if action == "accept_constitution_patch":
-            archive_path = accept_patch_proposal(framework_id, patch_id)
+            archive_path = accept_patch_proposal(storage_framework_id, patch_id)
             clear_patch_discussion(chat_id)
             communication_gate.send(chat_id, f"已打入宪法并完成本地 Git commit：{patch_id}\n归档：{archive_path}")
         elif action == "discuss_constitution_patch":
-            proposal = start_patch_discussion(framework_id, patch_id)
-            save_patch_discussion(chat_id, patch_id, framework_id)
+            proposal = start_patch_discussion(storage_framework_id, patch_id)
+            save_patch_discussion(chat_id, patch_id, storage_framework_id)
             communication_gate.send(
                 chat_id,
                 f"已进入补丁讨论：{patch_id}\n"
@@ -250,7 +252,7 @@ def _handle_patch_callback(action: str, chat_id: str, framework_id: str | None, 
                 "讨论结束时，回复“同意”或“拒绝”，系统只会产生这两个最终结论。",
             )
         elif action == "reject_constitution_patch":
-            archive_path = mark_patch_proposal(framework_id, patch_id, "rejected")
+            archive_path = mark_patch_proposal(storage_framework_id, patch_id, "rejected")
             clear_patch_discussion(chat_id)
             communication_gate.send(chat_id, f"已拒绝该宪法补丁：{patch_id}\n归档：{archive_path}")
     except Exception as exc:
@@ -260,7 +262,8 @@ def _handle_patch_callback(action: str, chat_id: str, framework_id: str | None, 
 def _handle_patch_discussion_text(chat_id: str, framework_id: str | None, patch_id: str, text: str) -> str:
     """处理补丁讨论中的普通文本。"""
 
-    if not framework_id:
+    storage_framework_id = _storage_framework_id(framework_id)
+    if not storage_framework_id:
         clear_patch_discussion(chat_id)
         return "补丁讨论已结束：缺少 framework_id，请重新发起 /absorb。"
 
@@ -270,22 +273,22 @@ def _handle_patch_discussion_text(chat_id: str, framework_id: str | None, patch_
         return f"已取消补丁讨论：{patch_id}。该提案仍保留在待审批目录，后续可重新发起讨论或手动处理。"
 
     if _is_accept_decision(normalized):
-        append_patch_discussion(framework_id, patch_id, "user", normalized)
+        append_patch_discussion(storage_framework_id, patch_id, "user", normalized)
         try:
-            archive_path = accept_patch_proposal(framework_id, patch_id)
+            archive_path = accept_patch_proposal(storage_framework_id, patch_id)
             clear_patch_discussion(chat_id)
         except Exception as exc:
             return f"打入宪法失败：{exc}\n讨论仍保留，你可以继续补充，或回复“拒绝”结束。"
         return f"已按讨论结论打入宪法：{patch_id}\n归档：{archive_path}"
 
     if _is_reject_decision(normalized):
-        append_patch_discussion(framework_id, patch_id, "user", normalized)
-        archive_path = mark_patch_proposal(framework_id, patch_id, "rejected")
+        append_patch_discussion(storage_framework_id, patch_id, "user", normalized)
+        archive_path = mark_patch_proposal(storage_framework_id, patch_id, "rejected")
         clear_patch_discussion(chat_id)
         return f"已按讨论结论拒绝该补丁：{patch_id}\n归档：{archive_path}"
 
     result = safe_run_absorb_discussion_turn(
-        framework_id=framework_id,
+        framework_id=storage_framework_id,
         patch_id=patch_id,
         user_message=normalized,
         chat_id=chat_id,
@@ -308,3 +311,14 @@ def _is_reject_decision(text: str) -> bool:
 
 def _is_cancel_discussion(text: str) -> bool:
     return text in {"取消", "取消讨论", "退出讨论", "先不讨论"}
+
+
+def _storage_framework_id(framework_id: str | None) -> str | None:
+    """Map a sub-framework target id to the strategy island storage directory."""
+
+    if not framework_id:
+        return None
+    try:
+        return resolve_absorb_target(framework_id)["framework_id"]
+    except ValueError:
+        return framework_id

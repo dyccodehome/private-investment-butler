@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from src import feishu_runtime
+from src.knowledge_absorber import PatchProposal
 from src.session_lock import save_pending_action
 
 
@@ -79,6 +81,39 @@ class FeishuRuntimeTest(unittest.TestCase):
             )
 
         callback.assert_called_once_with("discuss_constitution_patch", "cli", "Cash_Anchor", "PATCH-3")
+
+    def test_absorb_background_stores_base_framework_for_sub_framework_target(self) -> None:
+        proposal = PatchProposal(
+            patch_id="PATCH-6",
+            framework_id="Cash_Anchor",
+            target_id="Cash_Anchor/CN_Dividend_Income",
+            target_file="sub_frameworks/CN_Dividend_Income.md",
+            target_name="A 股红利子框架",
+            status="proposed",
+        )
+        with patch("src.feishu_runtime.run_knowledge_absorption", return_value=proposal), patch(
+            "src.feishu_runtime.save_pending_action"
+        ) as save_pending, patch("src.feishu_runtime.communication_gate.send_card"):
+            feishu_runtime._run_absorb_background(
+                "cli",
+                "Cash_Anchor/CN_Dividend_Income",
+                "高股息必须检查分红覆盖率",
+            )
+
+        self.assertEqual(save_pending.call_args.kwargs["framework_id"], "Cash_Anchor")
+
+    def test_patch_callback_normalizes_sub_framework_target_before_accept(self) -> None:
+        with patch("src.feishu_runtime.accept_patch_proposal", return_value=Path("/tmp/archive.json")) as accept, patch(
+            "src.feishu_runtime.communication_gate.send"
+        ):
+            feishu_runtime._handle_patch_callback(
+                "accept_constitution_patch",
+                "cli",
+                "Cash_Anchor/CN_Dividend_Income",
+                "PATCH-7",
+            )
+
+        accept.assert_called_once_with("Cash_Anchor", "PATCH-7")
 
     def test_patch_discussion_text_records_message(self) -> None:
         with patch("src.feishu_runtime.safe_run_absorb_discussion_turn") as discuss:
