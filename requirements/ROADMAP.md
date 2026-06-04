@@ -23,7 +23,7 @@
 - [x] A 股红利定时任务已改为财报核验清单：`src/dividend_disclosure.py` 不再调用问财，也不使用行情源股息字段作为现金流事实。
 - [x] 飞书基础运行时代码已具备：普通文本、Slash command、补丁卡片、审计拒绝卡片、会话锁和事件去重均已有实现或单元测试。
 - [x] 完整离线测试通过：`python3 -m unittest discover` 当前为 107 个测试通过。
-- [ ] 仍需真实飞书生产 smoke test：长连接启动、消息接收、按钮回调、审计拒绝按钮和定时任务推送。
+- [~] 真实飞书生产 smoke test 已部分完成：长连接启动和主动推送已通过；消息接收、按钮回调和定时任务真实执行推送仍需人工配合验证。
 - [ ] 仍需真实 Provider smoke test：DeepSeek 模型名、Yahoo Finance A 股数据、Longbridge CLI、新闻/公告 Provider 凭据。
 - [ ] 仍需把 Roadmap 中旧需求文档继续归档或改状态，避免 active 目录保留已完成阶段的历史文档。
 
@@ -233,7 +233,11 @@
 
 ## P1 - 验证飞书生产流程
 
-- [ ] 测试长连接启动。
+- [x] 测试长连接启动。
+  - 2026-06-04：直接启动可读取 `.env`，沙箱内 DNS 失败；真实联网后 DNS 通过但系统证书失败；带 certifi CA bundle 后成功连接 `wss://msg-frontier.feishu.cn`。
+- [x] 测试主动推送。
+  - 2026-06-04：已向 `FEISHU_DEFAULT_CHAT_ID` 发送 smoke test 消息，OpenAPI 返回发送成功。
+- [ ] 在真实飞书会话中测试普通消息接收。
 - [x] 单元测试覆盖普通消息和 Slash command 基础解析。
 - [x] 代码已实现重复事件抑制：`session_lock.mark_event_seen()`。
 - [x] 代码已实现按 chat_id 加锁：`acquire_processing()` / `release_processing()`。
@@ -243,6 +247,7 @@
 - [x] 代码已实现审计拒绝后的按钮。
   - `force_execute`
   - `abandon_operation`
+- [ ] 在真实飞书生产环境测试宪法补丁审批按钮。
 - [ ] 在真实飞书生产环境测试审计拒绝后的按钮。
 - [ ] 复核 `accept_patch_proposal()` 的行为。
   - 当前它会在回调路径里执行本地 `git commit`。
