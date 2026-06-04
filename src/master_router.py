@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from src.research_dossier import extract_symbol
+from src.symbol_ownership import framework_for_known_holding
 from src.state import AgentState
 
 
@@ -20,11 +22,16 @@ def route_intent(state: AgentState) -> AgentState:
     """
 
     text = state.user_input.lower()
+    symbol = extract_symbol(state.user_input)
+    owner_framework = framework_for_known_holding(symbol)
     # 每次路由调用都计数，包括子 Agent 弹回触发的重试。
     state.route_attempts += 1
 
     # 当前版本使用可读的语义提示；后续可替换为 LLM 分类器，不影响下游模块。
-    if any(token in text for token in ["红利", "股息", "分红", "低估值", "银行", "煤炭", "公用事业", "期权", "option", "covered call", "put", "call", "iv", "权利金", "现金流"]):
+    if owner_framework:
+        state.framework_id = owner_framework
+        state.route_reason = f"识别到本地持仓标的 {symbol} 属于 {owner_framework}。"
+    elif any(token in text for token in ["红利", "股息", "分红", "低估值", "银行", "煤炭", "公用事业", "期权", "option", "covered call", "put", "call", "iv", "权利金", "现金流"]):
         state.framework_id = "Cash_Anchor"
         state.route_reason = "识别到现金流防守、股息或期权权利金语义。"
     elif any(token in text for token in ["a股", "中国", "科技自立", "出海", "半导体", "新能源", "ma120", "本土", "产业升级"]):

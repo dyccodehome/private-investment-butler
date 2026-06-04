@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import unittest
+from unittest.mock import patch
 
-from src.state import AgentState, DisclosureRecord
-from src.sub_agent import _compact_disclosed_data_for_prompt, load_strategy_context
+from src.state import AgentState, DisclosureRecord, PipelineStatus
+from src.sub_agent import _compact_disclosed_data_for_prompt, intake_precheck, load_strategy_context, stage_one_request_skills
 
 
 class SubAgentContextTest(unittest.TestCase):
@@ -84,6 +85,26 @@ class SubAgentContextTest(unittest.TestCase):
         self.assertEqual(facts["positions"][0]["symbol"], "600900")
         self.assertNotIn("raw market data should be omitted", compact)
         self.assertNotIn("full dividend event that should be omitted", compact)
+
+    def test_precheck_accepts_known_cash_anchor_symbol_without_keywords(self) -> None:
+        state = AgentState(user_input="满仓买入600900，直接给我执行建议", framework_id="Cash_Anchor")
+
+        with patch("src.sub_agent.symbol_in_framework", return_value=True), patch(
+            "src.sub_agent.load_strategy_context",
+            return_value="context",
+        ):
+            result = intake_precheck(state)
+
+        self.assertFalse(result.bounce_back)
+        self.assertEqual(result.status, PipelineStatus.RUNNING)
+
+    def test_buy_intent_requests_portfolio_snapshot(self) -> None:
+        state = AgentState(user_input="满仓买入600900，直接给我执行建议", framework_id="Cash_Anchor")
+
+        result = stage_one_request_skills(state)
+
+        self.assertEqual(result.status, PipelineStatus.NEEDS_DISCLOSURE)
+        self.assertIn("portfolio_snapshot", [item.skill_name for item in result.requested_skills])
 
 
 if __name__ == "__main__":

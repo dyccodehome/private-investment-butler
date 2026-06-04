@@ -11,6 +11,7 @@ from src.init import FRAMEWORKS_DIR
 from src.llm_client import LLMClient
 from src.prompts import worker_system_prompt, worker_user_prompt
 from src.research_dossier import extract_symbol, should_use_research_dossier
+from src.symbol_ownership import symbol_in_framework
 from src.state import AgentState, PipelineStatus, SkillRequest
 
 
@@ -35,6 +36,15 @@ CASH_ANCHOR_LEDGER_KEYWORDS = [
     "年度目标",
     "现金流目标",
     "今年会分多少",
+    "买入",
+    "加仓",
+    "补仓",
+    "建仓",
+    "减仓",
+    "卖出",
+    "仓位",
+    "满仓",
+    "执行建议",
 ]
 
 CASH_ANCHOR_CONTEXT_BUNDLES = {
@@ -158,7 +168,8 @@ def intake_precheck(state: AgentState) -> AgentState:
 
     text = state.user_input.lower()
     keywords = FRAMEWORK_KEYWORDS.get(state.framework_id, [])
-    if keywords and not any(keyword in text for keyword in keywords):
+    symbol = extract_symbol(state.user_input)
+    if keywords and not any(keyword in text for keyword in keywords) and not symbol_in_framework(symbol, state.framework_id):
         # 拒绝接单，并把任务交还主管道重新路由。
         state.bounce_back = True
         state.bounce_reason = (
