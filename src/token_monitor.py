@@ -14,6 +14,7 @@ from src.init import RUNTIME_DIR
 
 
 TOKEN_USAGE_DIR = RUNTIME_DIR / "token_usage"
+TOKEN_WARNING_STATE_DIR = TOKEN_USAGE_DIR / "warning_state"
 
 
 def record_token_usage(
@@ -82,7 +83,7 @@ def record_token_usage(
 
 
 def build_token_warning(chat_id: str | None = None) -> str | None:
-    """当今日 Token 用量超过阈值时返回提醒文案。"""
+    """当今日 Token 用量超过阈值时返回提醒文案，并对同一 chat 当日去重。"""
 
     settings = get_config().token_monitor()
     if settings.get("enabled") is False:
@@ -97,6 +98,9 @@ def build_token_warning(chat_id: str | None = None) -> str | None:
     trigger = int(limit * threshold)
     if today_total < trigger:
         return None
+    if _warning_already_sent(chat_id, limit, threshold):
+        return None
+    _mark_warning_sent(chat_id, limit, threshold, today_total)
 
     scope = f"chat_id={chat_id}，" if chat_id else ""
     return (
@@ -120,6 +124,35 @@ def get_today_total_tokens() -> int:
         except json.JSONDecodeError:
             continue
     return total
+
+
+def _warning_already_sent(chat_id: str | None, limit: int, threshold: float) -> bool:
+    return _warning_marker_path(chat_id, limit, threshold).exists()
+
+
+def _mark_warning_sent(chat_id: str | None, limit: int, threshold: float, today_total: int) -> None:
+    path = _warning_marker_path(chat_id, limit, threshold)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "chat_id": chat_id,
+                "limit": limit,
+                "threshold": threshold,
+                "total_tokens": today_total,
+                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _warning_marker_path(chat_id: str | None, limit: int, threshold: float) -> Path:
+    today = datetime.now().strftime("%Y-%m-%d")
+    scope = chat_id or "global"
+    digest = hashlib.sha256(f"{scope}|{limit}|{threshold}".encode("utf-8")).hexdigest()[:16]
+    return TOKEN_WARNING_STATE_DIR / f"{today}-{digest}.json"
 
 
 def _extract_usage(response: dict[str, Any]) -> dict[str, int]:
