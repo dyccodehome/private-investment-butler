@@ -1,6 +1,6 @@
 # 私人投资管家待办清单
 
-最后更新：2026-06-03
+最后更新：2026-06-04
 
 这个文件用于跟踪当前 Agent 从工程原型走向稳定日常使用还需要完成的事项。
 
@@ -9,6 +9,23 @@
 - `[ ]` 未开始
 - `[~]` 进行中
 - `[x]` 已完成
+
+## 2026-06-04 代码复核结论
+
+- [x] README 已拆成英文版 `README.md` 和中文版 `README.zh-CN.md`，并按当前架构重写。
+- [x] P0/P1/P2 数据与复盘能力已落地并提交：`119b257 feat: add governed market intelligence and review records`。
+- [x] 行情 fallback 已落地：A 股走 `yfinance`，美股 Longbridge 失败后 fallback 到 `yfinance`，并记录 `source_chain`。
+- [x] 新闻/公告披露已接入 Skill：`news-search` 和 `announcement-search` 都会返回标准 Skill payload；未配置凭据时标记为数据质量缺口。
+- [x] 市场阶段上下文已落地：`src/market_phase.py` 会为 A 股和美股补充盘前、盘中、午休、盘后和非交易日信息。
+- [x] 数据质量摘要已落地：`src/data_quality.py` 会汇总覆盖度、鲜度、来源链和限制，并写入审计输入、会话黑匣子和 Decision Record。
+- [x] 输出契约和历史判断快照已落地：`src/output_contract.py` 会检查结论、事实、风险和下一步动作，并生成 `decision_snapshot`。
+- [x] 决策复盘统计已落地：`src/review_stats.py` 和 `scripts/decision_review_report.py` 可按日期/区间统计决策、审计、契约缺口和数据质量缺口。
+- [x] A 股红利定时任务已改为财报核验清单：`src/dividend_disclosure.py` 不再调用问财，也不使用行情源股息字段作为现金流事实。
+- [x] 飞书基础运行时代码已具备：普通文本、Slash command、补丁卡片、审计拒绝卡片、会话锁和事件去重均已有实现或单元测试。
+- [x] 完整离线测试通过：`python3 -m unittest discover` 当前为 107 个测试通过。
+- [ ] 仍需真实飞书生产 smoke test：长连接启动、消息接收、按钮回调、审计拒绝按钮和定时任务推送。
+- [ ] 仍需真实 Provider smoke test：DeepSeek 模型名、Yahoo Finance A 股数据、Longbridge CLI、新闻/公告 Provider 凭据。
+- [ ] 仍需把 Roadmap 中旧需求文档继续归档或改状态，避免 active 目录保留已完成阶段的历史文档。
 
 ## 已完成事项
 
@@ -103,8 +120,11 @@
   - [x] 新增统一 `src/market_data/` Provider 模块。
   - [x] A 股金融数据入口切到 Yahoo Finance / yfinance。
   - [x] 美股金融数据入口切到 Longbridge。
+  - [x] 美股行情增加 fallback：Longbridge 不可用时切到 yfinance。
+  - [x] 行情 payload 增加市场阶段上下文和数据质量摘要。
   - [x] 旧 `hithink-*` 行情、财务、基础信息 Skill 改为兼容入口或别名。
-  - [ ] 新闻、公告、研报暂不纳入本阶段。
+  - [x] 新闻、公告 Skill 已接入标准 payload。
+  - [ ] 研报暂未接入本阶段。
 - [~] 实现长桥美股持仓只读同步。
   - [x] 第一阶段优先调用 Longbridge CLI：`longbridge positions --format json`。
   - [x] 必须封装为固定 Python 函数，不允许 LLM 自由拼接或执行 shell 命令。
@@ -149,13 +169,20 @@
   - 模块：`src/tool_registry.py`
   - 覆盖框架权限、Agent 权限、风险等级、人工确认和输出 schema。
 - [x] 统一 Skill 返回结构。
-  - 标准格式：`{status, source, data_type, data, freshness, warnings, error}`。
+  - 标准格式：`{status, source, data_type, data, freshness, warnings, error, source_chain, data_quality}`。
   - 避免 `None` payload 被误认为“正常但无数据”。
+- [x] 新增披露数据质量摘要。
+  - 模块：`src/data_quality.py`
+  - 用于 Worker、Auditor、Decision Record 和复盘统计。
 - [x] 为缺少 Skill 凭据增加基础错误处理。
   - 缺少 API Key 时，不应表现得像“市场结果为空”。
 - [x] 新增 Decision Record。
   - 写入：`runtime/decisions/YYYY-MM-DD.jsonl`
   - 用于投资审计复盘，和技术 Trace 分离。
+- [x] 新增输出契约和决策快照。
+  - 模块：`src/output_contract.py`
+  - 检查结论、关键事实、风险或限制、下一步动作。
+  - 写入 `output_contract`、`decision_snapshot` 和 `data_quality_summary`。
 - [x] 新增轻量 Budget Manager。
   - 配置：`config.yaml::budgets`
   - 模块：`src/budget_manager.py`
@@ -184,6 +211,7 @@
 
 - [x] 在主流程终态输出后调用 `append_decision_to_dossier(state)`。
 - [x] 检测到标的代码时，把被审计拒绝的决策和审计结果写入对应 dossier。
+- [x] 普通决策写入 dossier 时会附带 `output_contract` 和 `decision_snapshot`。
 - [ ] 尽可能把飞书人工覆盖决策也写入对应 dossier。
 - [ ] 增加一个命令或流程，用于在财报/新闻后更新 dossier 事实。
 - [ ] 当 `freshness.is_stale` 为 true 时，在最终回复里提示档案可能过期。
@@ -193,6 +221,7 @@
 - [x] 新增 `src/harness_runtime.py`，提供稳定 Runtime facade。
 - [x] 新增 `src/action_card.py`，提供 Action Card 格式基础。
 - [x] 新增 `docs/ARCHITECTURE.md`，区分当前实现文档和目标架构文档。
+- [x] Auditor PASS/WARN/REJECT 的面向用户输出已隐藏完整审计日志，只保留短审计提醒或暂停原因。
 - [ ] 将 Auditor WARN/REJECT 输出接入标准 Action Card。
 - [ ] 将 Growth Review 输出接入 Action Card。
 - [ ] 将 `/absorb` 前置 Insight Classification：
@@ -205,15 +234,16 @@
 ## P1 - 验证飞书生产流程
 
 - [ ] 测试长连接启动。
-- [ ] 测试普通消息解析。
-- [ ] 测试重复事件抑制。
-- [ ] 测试按 chat_id 加锁。
-- [ ] 测试未知 Slash 命令处理。
+- [x] 单元测试覆盖普通消息和 Slash command 基础解析。
+- [x] 代码已实现重复事件抑制：`session_lock.mark_event_seen()`。
+- [x] 代码已实现按 chat_id 加锁：`acquire_processing()` / `release_processing()`。
+- [x] 代码已实现未知 Slash 命令处理。
 - [x] 测试 `/absorb` 提案生成。
-- [ ] 测试宪法补丁审批按钮。
-- [ ] 测试审计拒绝后的按钮。
+- [x] 单元测试覆盖宪法补丁卡片基础回调分发。
+- [x] 代码已实现审计拒绝后的按钮。
   - `force_execute`
   - `abandon_operation`
+- [ ] 在真实飞书生产环境测试审计拒绝后的按钮。
 - [ ] 复核 `accept_patch_proposal()` 的行为。
   - 当前它会在回调路径里执行本地 `git commit`。
   - 需要决定保留、加配置开关，还是改为只生成补丁并要求手动提交。
@@ -235,7 +265,9 @@
   - [x] workflow 预算配置
   - [x] 每次 LLM 后累计 trace token
   - [ ] 超预算降级策略
-- [ ] 在 README 中补充观测面板使用说明。
+- [~] 在 README 中补充观测和复盘使用说明。
+  - [x] 已记录 token report、decision review report 和 runtime 日志位置。
+  - [ ] 仍需补充 `/observability` 本地面板启动方式。
   - 后续需要为本地观测面板提供非 webhook 的启动方式。
 - [ ] 在 dashboard 中增加按错误类型聚合失败 trace 的视图。
 - [ ] 在 dashboard 中增加最贵调用视图。
@@ -249,19 +281,25 @@
 - [x] 新增 `test_portfolio_ledger.py`。
 - [x] 新增 `/contribute`、`/plan`、`/holding` 的命令注册测试。
 - [ ] 新增 `test_research_dossier.py`。
-- [ ] 新增 `test_skill_registry.py`。
-- [ ] 新增 `test_feishu_payload_parse.py`。
-- [ ] 新增离线 pipeline smoke test。
+- [x] 新增 Tool Registry 测试：`tests/test_tool_registry.py`。
+- [~] 新增飞书运行时测试：`tests/test_feishu_runtime.py` 已覆盖消息规范化、命令分发和卡片回调基础路径；长连接 payload 解析仍可补充。
+- [~] 新增离线 pipeline smoke test。
   - 未配置 provider key 时应返回清晰的 provider-not-configured 结果。
   - 网络/API 失败时应被分类，并输出用户可读错误。
+- [x] 新增数据质量、市场阶段、输出契约、复盘统计和 A 股红利财报核验测试。
 - [ ] 为 Cash Anchor 增加一小组样例 fixture 数据。
 
 ## P2 - 文档
 
-- [~] 更新 `README.md`，补充当前命令和观测面板使用方式。
+- [~] 更新 README，补充当前命令和观测面板使用方式。
+  - [x] 英文版 `README.md` 已重写。
+  - [x] 中文版 `README.zh-CN.md` 已新增。
   - [x] 当前 Slash 命令已记录。
-  - [ ] 观测面板还需要单独说明。
-- [ ] 记录必需 `.env` 变量，以及每个工作流分别需要哪些变量。
+  - [x] token report、decision review report 已记录。
+  - [ ] `/observability` 面板启动方式还需要单独说明。
+- [~] 记录必需 `.env` 变量，以及每个工作流分别需要哪些变量。
+  - [x] README 已记录通用变量。
+  - [ ] 每个工作流分别需要哪些变量还需拆分。
 - [~] 记录 Cash Anchor 私有数据文件格式。
   - [x] 命令管理的账本文件已记录。
   - [x] 持仓命令字段已记录。
