@@ -243,8 +243,22 @@ def _send_terminal_result(chat_id: str, state: AgentState) -> None:
             "审计未通过",
             state.final_answer or "审计发现风险，流程已暂停。",
             [
-                {"label": "继续执行", "action": "force_execute", "type": "danger", "state_id": action_id},
-                {"label": "放弃操作", "action": "abandon_operation", "type": "default", "state_id": action_id},
+                {
+                    "label": "继续执行",
+                    "action": "force_execute",
+                    "type": "danger",
+                    "state_id": action_id,
+                    "framework_id": state.framework_id,
+                    "reason": (state.final_answer or "audit rejected")[:500],
+                },
+                {
+                    "label": "放弃操作",
+                    "action": "abandon_operation",
+                    "type": "default",
+                    "state_id": action_id,
+                    "framework_id": state.framework_id,
+                    "reason": (state.final_answer or "audit rejected")[:500],
+                },
             ],
         )
         return

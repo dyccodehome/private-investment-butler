@@ -118,6 +118,27 @@ class FeishuRuntimeTest(unittest.TestCase):
         self.assertEqual(result, "callback received")
         accept.assert_called_once_with("Cash_Anchor", "PATCH-FALLBACK")
 
+    def test_card_callback_can_fallback_to_audit_payload_when_pending_is_missing(self) -> None:
+        with patch("src.feishu_runtime.communication_gate.send") as send, patch(
+            "src.feishu_runtime.save_user_action"
+        ) as save_action:
+            result = feishu_runtime.handle_feishu_card_callback(
+                {
+                    "chat_id": "cli",
+                    "action": "force_execute",
+                    "state_id": "audit-state-without-memory",
+                    "framework_id": "Cash_Anchor",
+                    "reason": "audit smoke reason",
+                },
+                async_run=False,
+            )
+
+        self.assertEqual(result, "callback received")
+        self.assertIn("继续执行", send.call_args.args[1])
+        save_action.assert_called_once()
+        self.assertEqual(save_action.call_args.kwargs["framework_id"], "Cash_Anchor")
+        self.assertEqual(save_action.call_args.kwargs["reason"], "audit smoke reason")
+
     def test_failed_patch_callback_restores_pending_action_for_retry(self) -> None:
         save_pending_action(
             chat_id="cli",

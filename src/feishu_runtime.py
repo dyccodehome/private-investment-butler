@@ -133,7 +133,7 @@ def handle_feishu_card_callback(value: dict[str, Any], *, async_run: bool = True
 
     pending = pop_pending_action(state_id)
     if not pending:
-        pending = _fallback_patch_pending_action(value, chat_id, action, state_id)
+        pending = _fallback_pending_action(value, chat_id, action, state_id)
     if not pending:
         if chat_id:
             communication_gate.send(chat_id, "该确认请求已过期或已处理。")
@@ -381,22 +381,26 @@ def _storage_framework_id(framework_id: str | None) -> str | None:
     return storage_framework_id(framework_id)
 
 
-def _fallback_patch_pending_action(
+def _fallback_pending_action(
     value: dict[str, Any],
     chat_id: str,
     action: str,
     state_id: str,
 ) -> PendingAction | None:
-    if action not in {"accept_constitution_patch", "discuss_constitution_patch", "reject_constitution_patch"}:
+    if action in {"accept_constitution_patch", "discuss_constitution_patch", "reject_constitution_patch"}:
+        framework_id = _storage_framework_id(str(value.get("framework_id") or ""))
+        reason = str(value.get("patch_id") or "")
+    elif action in {"force_execute", "abandon_operation"}:
+        framework_id = str(value.get("framework_id") or "")
+        reason = str(value.get("reason") or "audit rejected")
+    else:
         return None
-    framework_id = _storage_framework_id(str(value.get("framework_id") or ""))
-    patch_id = str(value.get("patch_id") or "")
-    if not chat_id or not framework_id or not patch_id:
+    if not chat_id or not framework_id or not reason:
         return None
     return PendingAction(
         chat_id=chat_id,
         action_id=state_id,
         framework_id=framework_id,
-        reason=patch_id,
+        reason=reason,
         created_at=time(),
     )

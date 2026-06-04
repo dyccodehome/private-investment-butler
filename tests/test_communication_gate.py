@@ -19,6 +19,7 @@ class CommunicationGateTest(unittest.TestCase):
                     "state_id": "state-1",
                     "framework_id": "Cash_Anchor",
                     "patch_id": "CASH-1",
+                    "reason": "smoke reason",
                 }
             ],
         )
@@ -30,6 +31,7 @@ class CommunicationGateTest(unittest.TestCase):
             "state_id": "state-1",
             "framework_id": "Cash_Anchor",
             "patch_id": "CASH-1",
+            "reason": "smoke reason",
         }
 
         self.assertEqual(button["value"], expected_value)

@@ -128,7 +128,7 @@ def _button_value(chat_id: str, action: dict[str, Any]) -> dict[str, Any]:
         "action": action["action"],
         "state_id": action.get("state_id", ""),
     }
-    for key in ("framework_id", "patch_id"):
+    for key in ("framework_id", "patch_id", "reason"):
         if action.get(key):
             value[key] = action[key]
     return value
