@@ -200,8 +200,8 @@ def extract_symbol(text: str) -> str | None:
     """从用户输入里提取一个保守的标的代码。"""
 
     patterns = [
-        r"\b[A-Z]{1,5}(?:\.[A-Z]{1,3})?\b",
-        r"\b\d{6}(?:\.(?:SH|SZ|SS))?\b",
+        r"(?<![A-Z0-9])\d{6}(?:\.(?:SH|SZ|SS))?(?![A-Z0-9])",
+        r"(?<![A-Z0-9])(?:[A-Z]{2,5}(?:\.[A-Z]{1,3})?|[A-Z]\.[A-Z]{1,3})(?![A-Z0-9])",
     ]
     for pattern in patterns:
         match = re.search(pattern, text.upper())

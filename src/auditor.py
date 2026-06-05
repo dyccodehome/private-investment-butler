@@ -38,11 +38,14 @@ CONSTITUTION_PATCH_TERMS = (
     "/absorb",
     "absorb",
     "宪法",
-    "框架",
     "补丁",
     "patch",
     "修改规则",
     "新增规则",
+    "重写规则",
+    "修改框架",
+    "新增框架",
+    "重写框架",
     "知识吸收",
 )
 
@@ -106,8 +109,9 @@ def enforce_circuit_breaker(state: AgentState) -> AgentState:
 def _select_persona(state: AgentState) -> str:
     """根据被拦截操作选择审计重点。"""
 
+    user_text = state.user_input.lower()
     text = f"{state.user_input}\n{state.draft_decision or ''}".lower()
-    if any(term.lower() in text for term in CONSTITUTION_PATCH_TERMS):
+    if any(term.lower() in user_text for term in CONSTITUTION_PATCH_TERMS):
         return PURIST_PERSONA
     if any(term.lower() in text for term in BUY_INTENT_TERMS):
         return DOOMER_PERSONA
