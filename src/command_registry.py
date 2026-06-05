@@ -100,6 +100,13 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "Knowledge",
         args_hint="<target_id> <文章链接、摘录或你的思考>",
     ),
+    CommandDef(
+        "dossier-refresh",
+        "用新闻、公告和正式披露刷新个股研究档案事实时间",
+        "Knowledge",
+        aliases=("refresh-dossier",),
+        args_hint="framework=<Cash_Anchor|Growth_Engine> symbol=<code> [market=CN|US]",
+    ),
 ]
 
 
@@ -149,6 +156,7 @@ def handle_command(raw_text: str, chat_id: str) -> str | None:
         "sync": _handle_sync,
         "apply": _handle_apply,
         "absorb": _handle_absorb,
+        "dossier-refresh": _handle_dossier_refresh,
     }
     handler = handlers.get(command.name)
     if not handler:
@@ -189,6 +197,7 @@ def help_text() -> str:
         "",
         "知识吸收：",
         "/absorb <target_id> <文章链接、摘录或你的思考>",
+        "/dossier-refresh framework=<Cash_Anchor|Growth_Engine> symbol=<code> [market=CN|US] - 刷新个股研究档案事实证据",
         "",
         "可用 target_id：",
         "- Cash_Anchor：现金流总框架，共同逻辑、资金池边界、总现金流目标",
@@ -244,6 +253,45 @@ def _handle_absorb(args: str, chat_id: str) -> str:
     framework_id, source_text = parse_absorb_args(args)
     proposal = run_knowledge_absorption(framework_id, source_text, chat_id=chat_id)
     return format_patch_proposal_for_user(proposal)
+
+
+def _handle_dossier_refresh(args: str, chat_id: str) -> str:
+    from src.research_dossier import format_dossier_refresh_result, refresh_dossier_facts
+
+    parsed = _parse_key_values(args)
+    positional = [part for part in args.strip().split() if "=" not in part]
+    framework_id = parsed.get("framework") or parsed.get("framework_id")
+    symbol = parsed.get("symbol")
+    if positional and positional[0] in {"Cash_Anchor", "Growth_Engine"}:
+        framework_id = framework_id or positional[0]
+        if len(positional) >= 2:
+            symbol = symbol or positional[1]
+    elif positional:
+        symbol = symbol or positional[0]
+
+    if framework_id not in {"Cash_Anchor", "Growth_Engine"}:
+        return (
+            "用法：/dossier-refresh framework=<Cash_Anchor|Growth_Engine> symbol=<code> [market=CN|US] [days=120]\n"
+            "示例：/dossier-refresh framework=Cash_Anchor symbol=600900 market=CN days=180"
+        )
+    if not symbol:
+        return "请提供 symbol，例如：/dossier-refresh framework=Cash_Anchor symbol=600900 market=CN"
+
+    try:
+        days = int(parsed.get("days") or 120)
+        limit = int(parsed.get("limit") or 10)
+    except ValueError:
+        return "days/limit 必须是整数。"
+
+    result = refresh_dossier_facts(
+        framework_id=framework_id,
+        symbol=symbol,
+        market=parsed.get("market"),
+        query=parsed.get("query"),
+        days=days,
+        limit=limit,
+    )
+    return format_dossier_refresh_result(result)
 
 
 def _handle_contribute(args: str, chat_id: str) -> str:

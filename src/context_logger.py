@@ -69,6 +69,13 @@ def save_user_action(
         save_decision_record(state)
     except Exception:
         pass
+    _try_append_research_dossier_user_action(
+        chat_id=chat_id,
+        framework_id=framework_id,
+        user_action=user_action,
+        final_reply_to_user=final_reply_to_user,
+        reason=reason,
+    )
     return path
 
 
@@ -120,5 +127,29 @@ def _try_append_research_dossier_decision(state: AgentState) -> None:
         from src.research_dossier import append_decision_to_dossier
 
         append_decision_to_dossier(state)
+    except Exception:
+        return
+
+
+def _try_append_research_dossier_user_action(
+    *,
+    chat_id: str,
+    framework_id: str | None,
+    user_action: str,
+    final_reply_to_user: str,
+    reason: str,
+) -> None:
+    """把人工确认动作追加到个股研究档案；失败不影响按钮回调。"""
+
+    try:
+        from src.research_dossier import append_user_action_to_dossier
+
+        append_user_action_to_dossier(
+            chat_id=chat_id,
+            framework_id=framework_id,
+            user_action=user_action,
+            final_reply_to_user=final_reply_to_user,
+            reason=reason,
+        )
     except Exception:
         return

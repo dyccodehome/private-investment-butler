@@ -189,6 +189,7 @@ def run_pipeline(user_input: str, chat_id: str = "cli") -> AgentState:
                 metadata={"audit_persona": state.audit_persona, "audit_signal": state.audit_signal},
             )
             state = enforce_circuit_breaker(state)
+            _append_research_dossier_stale_notice(state)
             if state.status == PipelineStatus.AUDIT_REJECTED:
                 trace_state_event(
                     state,
@@ -264,6 +265,23 @@ def _send_terminal_result(chat_id: str, state: AgentState) -> None:
         return
 
     communication_gate.send(chat_id, state.final_answer or "\n".join(state.errors))
+
+
+def _append_research_dossier_stale_notice(state: AgentState) -> None:
+    """Append a short stale dossier warning to the user-visible final answer."""
+
+    try:
+        from src.research_dossier import stale_dossier_notice_from_disclosures
+
+        notice = stale_dossier_notice_from_disclosures(state.disclosed_data)
+    except Exception:
+        return
+    if not notice:
+        return
+    current = state.final_answer or ""
+    if notice in current:
+        return
+    state.final_answer = f"{current}\n\n{notice}".strip()
 
 
 def _route_user_message(state: AgentState) -> str:

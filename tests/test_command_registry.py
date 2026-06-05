@@ -33,6 +33,7 @@ class CommandRegistryTest(unittest.TestCase):
         self.assertIn("/growth-watchlist", text)
         self.assertIn("/growth-review", text)
         self.assertIn("/absorb", text)
+        self.assertIn("/dossier-refresh", text)
         self.assertIn("Cash_Anchor/CN_Dividend_Income", text)
         self.assertIn("Cash_Anchor/US_Income_Options", text)
         self.assertIn("Growth_Engine/CN_Alpha_Growth", text)
@@ -293,6 +294,34 @@ class CommandRegistryTest(unittest.TestCase):
         self.assertIn("成功 1 条", reply or "")
         self.assertIn("300750.SZ", reply or "")
         upsert_watch_item.assert_called_once()
+
+    @patch("src.research_dossier.refresh_dossier_facts")
+    def test_dossier_refresh_uses_research_dossier_provider(self, refresh_dossier) -> None:
+        refresh_dossier.return_value = {
+            "status": "ok",
+            "framework_id": "Cash_Anchor",
+            "symbol": "600900",
+            "path": "frameworks/Cash_Anchor/research_dossiers/600900.json",
+            "last_fact_update_at": "2026-06-05T10:00:00",
+            "item_counts": {"news": 1, "announcement": 1, "filing": 1},
+            "warnings": [],
+        }
+
+        reply = handle_command("/dossier-refresh framework=Cash_Anchor symbol=600900 market=CN days=180", "cli")
+
+        self.assertIsNotNone(reply)
+        self.assertIn("研究档案事实刷新完成", reply or "")
+        refresh_dossier.assert_called_once()
+        self.assertEqual(refresh_dossier.call_args.kwargs["framework_id"], "Cash_Anchor")
+        self.assertEqual(refresh_dossier.call_args.kwargs["symbol"], "600900")
+        self.assertEqual(refresh_dossier.call_args.kwargs["market"], "CN")
+        self.assertEqual(refresh_dossier.call_args.kwargs["days"], 180)
+
+    def test_dossier_refresh_requires_framework(self) -> None:
+        reply = handle_command("/dossier-refresh symbol=600900 market=CN", "cli")
+
+        self.assertIsNotNone(reply)
+        self.assertIn("用法：/dossier-refresh", reply or "")
 
 
 if __name__ == "__main__":

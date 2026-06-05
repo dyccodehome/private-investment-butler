@@ -126,10 +126,181 @@ def append_decision_to_dossier(state: AgentState) -> Path | None:
             "agent_proposal": state.draft_decision,
             "audit_signal": state.audit_signal,
             "final_reply": state.final_answer,
+            "user_action": state.user_action,
             "status": state.status.value,
         }
     )
     return save_dossier(dossier)
+
+
+def append_user_action_to_dossier(
+    *,
+    chat_id: str,
+    framework_id: str | None,
+    user_action: str,
+    final_reply_to_user: str,
+    reason: str = "",
+) -> Path | None:
+    """把飞书人工确认动作尽可能追加到对应个股档案。"""
+
+    symbol = extract_symbol(" ".join([reason, final_reply_to_user]))
+    if not framework_id or not symbol:
+        return None
+
+    normalized_symbol = normalize_symbol(symbol)
+    dossier, _ = load_or_create_dossier(framework_id, normalized_symbol)
+    now = _now()
+    dossier.decision_log.append(
+        {
+            "timestamp": now,
+            "user_query": "[interactive_callback]",
+            "chat_id": chat_id,
+            "context_bundle_id": "",
+            "disclosed_skills": [],
+            "output_contract": {},
+            "decision_snapshot": {
+                "version": 1,
+                "created_at": now,
+                "framework_id": framework_id,
+                "symbol": normalized_symbol,
+                "action_type": "human_override" if user_action == "user_clicked_force_execute" else "human_abandon",
+                "audit_signal": "REJECT",
+                "status": "human_action",
+            },
+            "agent_proposal": "",
+            "audit_signal": "REJECT",
+            "audit_reason": reason,
+            "final_reply": final_reply_to_user,
+            "user_action": user_action,
+            "status": "human_action",
+        }
+    )
+    return save_dossier(dossier)
+
+
+def refresh_dossier_facts(
+    *,
+    framework_id: str,
+    symbol: str,
+    market: str | None = None,
+    query: str | None = None,
+    days: int = 120,
+    limit: int = 10,
+) -> dict[str, Any]:
+    """用新闻、公告和正式披露刷新 dossier 事实证据。"""
+
+    normalized_symbol = normalize_symbol(symbol)
+    dossier, path = load_or_create_dossier(framework_id, normalized_symbol)
+    existed_before_refresh = path.exists()
+    clean_query = str(query or f"{normalized_symbol} 财报 分红 新闻 公告").strip()
+
+    from src.market_intel import fetch_company_announcements, fetch_company_news, fetch_filings
+
+    news = fetch_company_news(normalized_symbol, market=market, query=clean_query, limit=limit)
+    announcements = fetch_company_announcements(
+        normalized_symbol,
+        market=market,
+        query=clean_query,
+        limit=limit,
+        days=days,
+    )
+    filings = fetch_filings(
+        normalized_symbol,
+        market=market,
+        query=clean_query,
+        limit=limit,
+        days=days,
+    )
+    sources = {
+        "news": _compact_intel_payload(news),
+        "announcement": _compact_intel_payload(announcements),
+        "filing": _compact_intel_payload(filings),
+    }
+    item_counts = {key: len(value["items"]) for key, value in sources.items()}
+    has_fact_items = any(count > 0 for count in item_counts.values())
+    now = _now()
+    refresh_record = {
+        "timestamp": now,
+        "source": "market_intel_refresh",
+        "query": clean_query,
+        "symbol": normalized_symbol,
+        "market": str(market or ""),
+        "days": days,
+        "limit": limit,
+        "status": "ok" if has_fact_items else "missing",
+        "item_counts": item_counts,
+        "sources": sources,
+    }
+    dossier.evidence_log.append(refresh_record)
+    if has_fact_items:
+        dossier.last_fact_update_at = now
+    saved_path = save_dossier(dossier)
+    return {
+        "status": refresh_record["status"],
+        "framework_id": framework_id,
+        "symbol": normalized_symbol,
+        "path": str(saved_path),
+        "existed_before_refresh": existed_before_refresh,
+        "last_fact_update_at": dossier.last_fact_update_at,
+        "freshness": dossier_freshness(dossier),
+        "item_counts": item_counts,
+        "source_status": {key: value["status"] for key, value in sources.items()},
+        "warnings": _refresh_warnings(sources),
+    }
+
+
+def format_dossier_refresh_result(result: dict[str, Any]) -> str:
+    """把 dossier refresh 结果格式化给用户。"""
+
+    lines = [
+        "研究档案事实刷新完成：",
+        f"- 标的：{result.get('symbol') or 'UNKNOWN'}",
+        f"- 框架：{result.get('framework_id') or ''}",
+        f"- 状态：{result.get('status') or 'unknown'}",
+        f"- last_fact_update_at：{result.get('last_fact_update_at') or '未更新'}",
+    ]
+    counts = result.get("item_counts") if isinstance(result.get("item_counts"), dict) else {}
+    if counts:
+        lines.append(
+            "- 命中条目："
+            f"news={counts.get('news', 0)}, "
+            f"announcement={counts.get('announcement', 0)}, "
+            f"filing={counts.get('filing', 0)}"
+        )
+    warnings = [str(item) for item in result.get("warnings") or [] if str(item).strip()]
+    if warnings:
+        lines.append("- 缺口：" + "；".join(warnings[:3]))
+    lines.append(f"- 文件：{result.get('path') or ''}")
+    return "\n".join(lines)
+
+
+def stale_dossier_notice_from_disclosures(disclosures: list[Any]) -> str:
+    """从已披露 research_dossier 中生成面向最终回复的 stale 提示。"""
+
+    for item in disclosures:
+        if getattr(item, "skill_name", "") != "research_dossier":
+            continue
+        payload = getattr(item, "payload", {})
+        if not isinstance(payload, dict):
+            continue
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        freshness = data.get("freshness") if isinstance(data.get("freshness"), dict) else {}
+        if not freshness.get("is_stale"):
+            continue
+        symbol = str(data.get("symbol") or "").strip()
+        framework_id = str(data.get("framework_id") or "").strip()
+        reason = str(freshness.get("reason") or "研究档案可能过期，需要重新核对最新事实。")
+        refresh_command = (
+            f"/dossier-refresh framework={framework_id} symbol={symbol}"
+            if framework_id and symbol
+            else "/dossier-refresh framework=<Cash_Anchor|Growth_Engine> symbol=<symbol>"
+        )
+        return (
+            f"研究档案提示：{symbol or '该标的'} 的历史判断可能过期。"
+            f"{reason} 建议先执行 {refresh_command} 后再更新结论。"
+        )
+    return ""
 
 
 def dossier_freshness(dossier: ResearchDossier) -> dict[str, Any]:
@@ -229,6 +400,35 @@ def _normalize_dossier_data(data: dict[str, Any], framework_id: str, symbol: str
     base["symbol"] = normalize_symbol(str(base.get("symbol") or symbol))
     base["framework_id"] = str(base.get("framework_id") or framework_id)
     return base
+
+
+def _compact_intel_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    raw_items = data.get("items") if isinstance(data.get("items"), list) else []
+    return {
+        "status": str(payload.get("status") or "missing"),
+        "source": str(payload.get("source") or ""),
+        "data_type": str(payload.get("data_type") or ""),
+        "error": str(payload.get("error") or ""),
+        "items": [_compact_intel_item(item) for item in raw_items[:5] if isinstance(item, dict)],
+        "source_chain": [dict(item) for item in payload.get("source_chain") or [] if isinstance(item, dict)],
+    }
+
+
+def _compact_intel_item(item: dict[str, Any]) -> dict[str, Any]:
+    allowed = ["symbol", "name", "title", "category", "published_at", "report_date", "source", "provider", "url"]
+    return {key: str(item.get(key) or "") for key in allowed if str(item.get(key) or "").strip()}
+
+
+def _refresh_warnings(sources: dict[str, dict[str, Any]]) -> list[str]:
+    warnings: list[str] = []
+    for data_type, payload in sources.items():
+        if payload.get("items"):
+            continue
+        error = str(payload.get("error") or "").strip()
+        status = str(payload.get("status") or "missing")
+        warnings.append(f"{data_type}={status}" + (f": {error}" if error else ""))
+    return warnings
 
 
 def _now() -> str:

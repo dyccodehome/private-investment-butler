@@ -212,9 +212,9 @@
 - [x] 在主流程终态输出后调用 `append_decision_to_dossier(state)`。
 - [x] 检测到标的代码时，把被审计拒绝的决策和审计结果写入对应 dossier。
 - [x] 普通决策写入 dossier 时会附带 `output_contract` 和 `decision_snapshot`。
-- [ ] 尽可能把飞书人工覆盖决策也写入对应 dossier。
-- [ ] 增加一个命令或流程，用于在财报/新闻后更新 dossier 事实。
-- [ ] 当 `freshness.is_stale` 为 true 时，在最终回复里提示档案可能过期。
+- [x] 尽可能把飞书人工覆盖决策也写入对应 dossier。
+- [x] 增加 `/dossier-refresh`，用新闻、公告和正式披露刷新 dossier 事实证据。
+- [x] 当 `freshness.is_stale` 为 true 时，在最终回复里提示档案可能过期。
 
 ## P1 - Harness Runtime 架构层
 
