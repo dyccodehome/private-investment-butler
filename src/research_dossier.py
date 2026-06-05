@@ -285,7 +285,9 @@ def stale_dossier_notice_from_disclosures(disclosures: list[Any]) -> str:
             continue
         result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
         data = result.get("data") if isinstance(result.get("data"), dict) else {}
-        freshness = data.get("freshness") if isinstance(data.get("freshness"), dict) else {}
+        freshness = result.get("freshness") if isinstance(result.get("freshness"), dict) else {}
+        if not freshness:
+            freshness = data.get("freshness") if isinstance(data.get("freshness"), dict) else {}
         if not freshness.get("is_stale"):
             continue
         symbol = str(data.get("symbol") or "").strip()

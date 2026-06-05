@@ -106,13 +106,13 @@ class ResearchDossierTest(unittest.TestCase):
                     skill_name="research_dossier",
                     payload={
                         "result": {
+                            "freshness": {
+                                "is_stale": True,
+                                "reason": "档案还没有事实更新时间。",
+                            },
                             "data": {
                                 "symbol": "NVDA",
                                 "framework_id": "Growth_Engine",
-                                "freshness": {
-                                    "is_stale": True,
-                                    "reason": "档案还没有事实更新时间。",
-                                },
                             }
                         }
                     },

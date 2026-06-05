@@ -44,6 +44,27 @@ class DataQualityTest(unittest.TestCase):
         self.assertEqual(summary["coverage"]["news"], "missing")
         self.assertEqual(summary["stale_or_unknown_blocks"], ["news"])
 
+    def test_summarize_disclosures_marks_is_stale_freshness(self) -> None:
+        disclosure = DisclosureRecord(
+            skill_name="research_dossier",
+            payload={
+                "result": {
+                    "status": "ok",
+                    "source": "local",
+                    "data_type": "research_dossier",
+                    "data": {},
+                    "freshness": {"is_stale": True, "reason": "档案还没有事实更新时间。"},
+                    "warnings": [],
+                    "error": "",
+                }
+            },
+        )
+
+        summary = summarize_disclosures([disclosure])
+
+        self.assertEqual(summary["coverage"]["research_dossier"], "ok")
+        self.assertEqual(summary["stale_or_unknown_blocks"], ["research_dossier"])
+
 
 if __name__ == "__main__":
     unittest.main()

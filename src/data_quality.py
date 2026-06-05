@@ -81,7 +81,7 @@ def _freshness_label(payload: dict[str, Any]) -> str:
     status = str(payload.get("status") or "")
     freshness = payload.get("freshness")
     if isinstance(freshness, dict):
-        if freshness.get("stale"):
+        if freshness.get("stale") or freshness.get("is_stale"):
             return "stale"
         if status != "ok":
             return "unknown"
