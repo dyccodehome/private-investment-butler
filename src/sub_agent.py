@@ -407,7 +407,7 @@ def _compact_skill_data(skill_name: str, data: dict[str, Any]) -> dict[str, Any]
         }
     if skill_name == "research_dossier":
         return _truncate_nested(data, max_string=500, max_items=8)
-    if skill_name in {"hithink-market-query", "hithink-finance-query", "hithink-basicinfo-query"}:
+    if skill_name == "hithink-market-query":
         payload = data.get("payload") if isinstance(data.get("payload"), dict) else data
         return _compact_market_payload(payload)
     return _truncate_nested(data, max_string=500, max_items=8)

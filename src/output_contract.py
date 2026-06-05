@@ -130,8 +130,6 @@ def extract_market_phase(disclosures: list[Any]) -> dict[str, Any]:
     for item in disclosures:
         if getattr(item, "skill_name", "") not in {
             "hithink-market-query",
-            "hithink-finance-query",
-            "hithink-basicinfo-query",
         }:
             continue
         result = _result_payload(item)

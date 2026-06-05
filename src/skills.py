@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -181,8 +180,6 @@ def _execute_skill_payload(skill_id: str, arguments: dict[str, Any]) -> dict[str
 
     if skill_id == "portfolio_snapshot":
         return build_enriched_portfolio_snapshot()
-    if skill_id == "position_snapshot":
-        return _build_position_snapshot(arguments)
     if skill_id == "research_dossier":
         return build_research_dossier_snapshot(
             framework_id=arguments.get("framework_id"),
@@ -195,7 +192,7 @@ def _execute_skill_payload(skill_id: str, arguments: dict[str, Any]) -> dict[str
         return _execute_news_search(arguments)
     if skill_id == "announcement-search":
         return _execute_announcement_search(arguments)
-    if skill_id in {"hithink-market-query", "hithink-finance-query", "hithink-basicinfo-query"}:
+    if skill_id == "hithink-market-query":
         from src.market_data import fetch_market_data
 
         symbol = str(arguments.get("symbol") or arguments.get("stock_code") or arguments.get("query") or "").strip()
@@ -335,62 +332,15 @@ def _freshness(raw_payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _default_source(skill_id: str) -> str:
-    if skill_id in {"portfolio_snapshot", "position_snapshot", "research_dossier", "trade_history"}:
+    if skill_id in {"portfolio_snapshot", "research_dossier", "trade_history"}:
         return "local"
-    if skill_id in {"hithink-market-query", "hithink-finance-query", "hithink-basicinfo-query"}:
+    if skill_id == "hithink-market-query":
         return "market_data_provider"
     if skill_id == "news-search":
         return "iwencai_news_search"
     if skill_id == "announcement-search":
         return "iwencai_announcement_search"
     return "skill_registry"
-
-
-def _build_position_snapshot(arguments: dict[str, Any]) -> dict[str, Any]:
-    """读取本地 Cash/Growth 持仓，返回结构化仓位事实。"""
-
-    symbol = str(arguments.get("symbol") or "").strip().upper()
-    cash_positions: list[dict[str, Any]] = []
-    growth_positions: list[dict[str, Any]] = []
-
-    try:
-        from src.portfolio_ledger import read_holdings
-
-        for item in read_holdings():
-            if not symbol or item.symbol.upper() == symbol:
-                cash_positions.append(asdict(item))
-    except Exception as exc:
-        return {
-            "status": "error",
-            "source": "local_position_snapshot",
-            "data": {"symbol": symbol, "cash_anchor": [], "growth_engine": []},
-            "error": f"Cash Anchor 持仓读取失败：{exc}",
-        }
-
-    try:
-        from src.growth_portfolio import read_growth_holdings
-
-        for item in read_growth_holdings():
-            if not symbol or item.symbol.upper() == symbol:
-                growth_positions.append(asdict(item))
-    except Exception as exc:
-        return {
-            "status": "error",
-            "source": "local_position_snapshot",
-            "data": {"symbol": symbol, "cash_anchor": cash_positions, "growth_engine": []},
-            "error": f"Growth Engine 持仓读取失败：{exc}",
-        }
-
-    return {
-        "status": "ok",
-        "source": "local_position_snapshot",
-        "data": {
-            "symbol": symbol,
-            "cash_anchor": cash_positions,
-            "growth_engine": growth_positions,
-        },
-        "error": "",
-    }
 
 
 def _build_trade_history_snapshot(arguments: dict[str, Any]) -> dict[str, Any]:

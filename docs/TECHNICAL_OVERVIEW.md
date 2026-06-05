@@ -46,11 +46,11 @@ private_investment_butler/
 │   └── templates/
 ├── skills/
 │   ├── portfolio_snapshot/
-│   ├── position_snapshot/
 │   ├── research_dossier/
 │   ├── trade_history/
 │   ├── news-search/
-│   └── hithink-*/
+│   ├── announcement-search/
+│   └── hithink-market-query/
 ├── src/
 │   ├── app_config.py
 │   ├── command_registry.py
@@ -193,7 +193,7 @@ private_investment_butler/
 }
 ```
 
-旧 `hithink-market-query`、`hithink-finance-query`、`hithink-basicinfo-query` 已通过 `src/skills.py` 接入统一 Provider，作为兼容入口存在。
+`hithink-market-query` 已通过 `src/skills.py` 接入统一 Provider。旧的财务、基本资料、选股、港股、期货、宏观和研报类 Skill 已删除；需要的核查顺序已合并进保留的行情、新闻、公告和研究档案 Skill。
 
 ### Growth Engine 本地持仓、自选和复盘
 
@@ -1185,7 +1185,7 @@ Worker、Auditor、Knowledge Absorber 可以使用不同 provider/model/reasonin
 现状：
 
 - Market Data Provider 已统一 `{status, source, market, symbol, data, error}`。
-- `position_snapshot`、`trade_history`、`news-search` 已返回结构化 payload。
+- `trade_history`、`news-search`、`announcement-search`、`hithink-market-query` 已返回结构化 payload。
 - `portfolio_snapshot` 和 `research_dossier` 仍保留业务快照结构，后续可继续收敛到统一 status schema。
 
 改造路径：

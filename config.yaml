@@ -47,7 +47,6 @@ frameworks:
     allowed_skills:
       - portfolio_snapshot
       - hithink-market-query
-      - position_snapshot
       - research_dossier
       - trade_history
       - news-search
@@ -59,7 +58,6 @@ frameworks:
     max_output_tokens: 4096
     allowed_skills:
       - hithink-market-query
-      - position_snapshot
       - research_dossier
       - trade_history
       - news-search

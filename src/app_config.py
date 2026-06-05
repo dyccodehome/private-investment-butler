@@ -64,7 +64,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "max_output_tokens": 4096,
             "allowed_skills": [
                 "portfolio_snapshot",
-                "position_snapshot",
                 "research_dossier",
                 "hithink-market-query",
                 "trade_history",
@@ -77,7 +76,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "reasoning_effort": "high",
             "max_output_tokens": 4096,
             "allowed_skills": [
-                "position_snapshot",
                 "research_dossier",
                 "hithink-market-query",
                 "trade_history",

@@ -19,7 +19,7 @@ class SkillsTest(unittest.TestCase):
 
         self.assertEqual(spec.skill_id, "portfolio_snapshot")
         with self.assertRaises(PermissionError):
-            skills.ensure_skill_allowed("Cash_Anchor", "hithink-usstock-selector")
+            skills.ensure_skill_allowed("Growth_Engine", "portfolio_snapshot")
 
     def test_news_search_without_key_returns_not_configured_payload(self) -> None:
         with patch.dict(os.environ, {"IWENCAI_API_KEY": ""}):
