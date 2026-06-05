@@ -21,6 +21,7 @@ _EXECUTOR = ThreadPoolExecutor(max_workers=4)
 _TENANT_TOKEN = ""
 _TENANT_TOKEN_EXPIRES_AT = 0.0
 SYSTEM_CA_PATH = Path("/etc/ssl/cert.pem")
+FEISHU_POST_CHUNK_CHARS = 1600
 
 
 def send(chat_id: str, text: str) -> None:
@@ -32,15 +33,65 @@ def send(chat_id: str, text: str) -> None:
 
     settings = get_config().messaging()
     if settings.app_id and settings.app_secret:
-        payload = {
-            "receive_id": chat_id,
-            "msg_type": "post",
-            "content": json.dumps(_build_post_content(text), ensure_ascii=False),
-        }
-        _EXECUTOR.submit(_post_feishu_openapi_message, settings, "chat_id", payload)
+        payloads = [
+            {
+                "receive_id": chat_id,
+                "msg_type": "post",
+                "content": json.dumps(_build_post_content(chunk), ensure_ascii=False),
+            }
+            for chunk in _split_feishu_post_text(text)
+        ]
+        _EXECUTOR.submit(_post_feishu_openapi_messages, settings, "chat_id", payloads)
         return
 
     print(f"[{chat_id}] {text}")
+
+
+def _split_feishu_post_text(text: str, *, limit: int = FEISHU_POST_CHUNK_CHARS) -> list[str]:
+    """Split long Feishu rich-text messages into ordered post-sized chunks."""
+
+    clean = str(text or "")
+    if len(clean) <= limit:
+        return [clean]
+
+    chunks: list[str] = []
+    current = ""
+    for block in _text_blocks(clean):
+        separator = "\n\n" if current else ""
+        if len(current) + len(separator) + len(block) <= limit:
+            current = f"{current}{separator}{block}" if current else block
+            continue
+        if current:
+            chunks.append(current)
+            current = ""
+        if len(block) <= limit:
+            current = block
+            continue
+        chunks.extend(_hard_wrap(block, limit))
+    if current:
+        chunks.append(current)
+
+    total = len(chunks)
+    return [f"({index}/{total})\n{chunk}" for index, chunk in enumerate(chunks, start=1)]
+
+
+def _text_blocks(text: str) -> list[str]:
+    blocks: list[str] = []
+    current: list[str] = []
+    for line in text.splitlines():
+        if line.strip():
+            current.append(line)
+            continue
+        if current:
+            blocks.append("\n".join(current))
+            current = []
+    if current:
+        blocks.append("\n".join(current))
+    return blocks or [text]
+
+
+def _hard_wrap(text: str, limit: int) -> list[str]:
+    return [text[index : index + limit] for index in range(0, len(text), limit)]
 
 
 def _build_post_content(text: str, title: str = "") -> dict[str, Any]:
@@ -160,6 +211,17 @@ def _post_feishu_openapi_message(
         # 通讯失败不能拖垮投资管道。
         print(f"Feishu send failed: {exc}", flush=True)
         return
+
+
+def _post_feishu_openapi_messages(
+    settings: MessagingSettings,
+    receive_id_type: str,
+    payloads: list[dict[str, Any]],
+) -> None:
+    """Send multiple Feishu messages in order from one worker thread."""
+
+    for payload in payloads:
+        _post_feishu_openapi_message(settings, receive_id_type, payload)
 
 
 def _get_tenant_access_token(settings: MessagingSettings) -> str:

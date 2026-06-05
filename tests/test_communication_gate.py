@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from src.communication_gate import _build_interactive_card, _build_post_content
+from src.communication_gate import _build_interactive_card, _build_post_content, _split_feishu_post_text
 
 
 class CommunicationGateTest(unittest.TestCase):
@@ -43,6 +43,22 @@ class CommunicationGateTest(unittest.TestCase):
         block = content["zh_cn"]["content"][0][0]
         self.assertEqual(block["tag"], "md")
         self.assertIn("先看到账流水", block["text"])
+
+    def test_long_post_text_is_split_with_order_prefix(self) -> None:
+        text = "第一段" + "a" * 20 + "\n\n第二段" + "b" * 20
+
+        chunks = _split_feishu_post_text(text, limit=24)
+
+        self.assertEqual(len(chunks), 2)
+        self.assertTrue(chunks[0].startswith("(1/2)\n"))
+        self.assertTrue(chunks[1].startswith("(2/2)\n"))
+        self.assertIn("第一段", chunks[0])
+        self.assertIn("第二段", chunks[1])
+
+    def test_single_oversized_block_is_hard_wrapped(self) -> None:
+        chunks = _split_feishu_post_text("abcdef", limit=3)
+
+        self.assertEqual(chunks, ["(1/2)\nabc", "(2/2)\ndef"])
 
 
 if __name__ == "__main__":
