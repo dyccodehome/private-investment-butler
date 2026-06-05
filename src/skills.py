@@ -381,13 +381,62 @@ def _build_trade_history_snapshot(arguments: dict[str, Any]) -> dict[str, Any]:
 def _execute_news_search(arguments: dict[str, Any]) -> dict[str, Any]:
     """Fetch company news through free read-only providers."""
 
-    return fetch_company_news(arguments)
+    query = _market_intel_query(arguments)
+    symbol = _market_intel_symbol(arguments, query)
+    return fetch_company_news(
+        symbol or query,
+        market=_market_intel_market(arguments),
+        query=query,
+        limit=_market_intel_limit(arguments),
+    )
 
 
 def _execute_announcement_search(arguments: dict[str, Any]) -> dict[str, Any]:
     """Fetch announcements and filings through free read-only providers."""
 
-    return fetch_company_announcements(arguments)
+    query = _market_intel_query(arguments)
+    symbol = _market_intel_symbol(arguments, query)
+    return fetch_company_announcements(
+        symbol or query,
+        market=_market_intel_market(arguments),
+        query=query,
+        limit=_market_intel_limit(arguments),
+        days=_market_intel_days(arguments),
+    )
+
+
+def _market_intel_query(arguments: dict[str, Any]) -> str:
+    return str(arguments.get("query") or arguments.get("symbol") or arguments.get("stock_code") or "").strip()
+
+
+def _market_intel_symbol(arguments: dict[str, Any], query: str) -> str:
+    explicit = str(arguments.get("symbol") or arguments.get("stock_code") or "").strip().upper()
+    if explicit:
+        return explicit
+    for token in query.replace("，", " ").replace(",", " ").split():
+        clean = token.strip().strip("()（）[]【】").upper()
+        if clean.isdigit() and len(clean) == 6:
+            return clean
+    return ""
+
+
+def _market_intel_market(arguments: dict[str, Any]) -> str:
+    explicit = str(arguments.get("market") or "").strip().upper()
+    return "CN" if explicit in {"A", "ASHARE", "A_SHARE"} else explicit
+
+
+def _market_intel_limit(arguments: dict[str, Any]) -> int:
+    try:
+        return max(1, min(int(arguments.get("limit") or 10), 20))
+    except (TypeError, ValueError):
+        return 10
+
+
+def _market_intel_days(arguments: dict[str, Any]) -> int:
+    try:
+        return max(1, min(int(arguments.get("days") or 30), 365))
+    except (TypeError, ValueError):
+        return 30
 
 
 def _iter_framework_dirs(framework_id: str) -> list[Path]:

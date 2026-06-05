@@ -201,7 +201,7 @@ Scheduled jobs live in `config.yaml::scheduler.jobs`.
 | Job | Market | Schedule | Purpose |
 | --- | --- | --- | --- |
 | `growth_cn_daily_review` | CN | Daily 16:30 Asia/Shanghai | A-share growth review after market close. |
-| `cash_anchor_cn_dividend_review` | CN | Daily 18:30 Asia/Shanghai | A-share dividend financial-report review workflow. It does not depend on WenCai dividend search. |
+| `cash_anchor_cn_dividend_review` | CN | Daily 18:30 Asia/Shanghai | A-share dividend workflow based on financial reports, dividend announcements, and distribution notices. |
 | `cash_anchor_us_income_distribution_sync` | US | Daily 07:15 Asia/Shanghai | US income distribution sync and review. |
 | `growth_us_daily_review` | US | Daily 06:00 Asia/Shanghai | US growth review after US market close. |
 | `growth_weekly_review` | ALL | Sunday 20:00 Asia/Shanghai | Weekly review across growth frameworks. |

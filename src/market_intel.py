@@ -6,6 +6,8 @@ free data sources and return the same standard envelope used by Skills.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -17,24 +19,30 @@ from src.market_data.symbol_mapper import infer_market, normalize_symbol
 DEFAULT_USER_AGENT = "private-investment-butler/1.0 contact: local@example.com"
 
 
-def fetch_company_news(arguments: dict[str, Any]) -> dict[str, Any]:
+def fetch_company_news(
+    symbol: str,
+    market: str | None = None,
+    *,
+    query: str | None = None,
+    limit: int = 10,
+) -> dict[str, Any]:
     """Fetch recent company or market news from free sources."""
 
-    query = _query(arguments)
-    if not query:
+    clean_query = _clean_query(symbol=symbol, query=query)
+    if not clean_query:
         return _error_payload("news", "market_intel_news", "", "缺少 query 参数。")
 
-    symbol = _symbol(arguments, query)
-    market = _market(arguments, symbol)
+    clean_symbol = _clean_symbol_arg(symbol, clean_query)
+    clean_market = _market(market, clean_symbol)
     attempts: list[dict[str, Any]] = []
     items: list[dict[str, Any]] = []
 
-    if market == "CN":
-        result = _akshare_stock_news(symbol or query)
+    if clean_market == "CN":
+        result = _akshare_stock_news(clean_symbol or clean_query)
         attempts.append(_attempt("akshare_stock_news_em", result))
         items.extend(result.get("items") or [])
-    elif market == "US":
-        result = _yfinance_news(symbol or query)
+    elif clean_market == "US":
+        result = _yfinance_news(clean_symbol or clean_query)
         attempts.append(_attempt("yfinance_news", result))
         items.extend(result.get("items") or [])
     else:
@@ -42,7 +50,7 @@ def fetch_company_news(arguments: dict[str, Any]) -> dict[str, Any]:
             ("akshare_stock_news_em", _akshare_stock_news),
             ("yfinance_news", _yfinance_news),
         ):
-            result = provider(symbol or query)
+            result = provider(clean_symbol or clean_query)
             attempts.append(_attempt(provider_name, result))
             items.extend(result.get("items") or [])
             if items:
@@ -51,55 +59,175 @@ def fetch_company_news(arguments: dict[str, Any]) -> dict[str, Any]:
     return _standard_intel_payload(
         data_type="news",
         source="market_intel_news",
-        query=query,
-        symbol=symbol,
-        market=market,
-        items=_dedupe_items(items)[: _limit(arguments)],
+        query=clean_query,
+        symbol=clean_symbol,
+        market=clean_market,
+        items=_dedupe_items(items)[: _bounded_limit(limit)],
         attempts=attempts,
         empty_error="免费新闻源没有返回可用条目。",
     )
 
 
-def fetch_company_announcements(arguments: dict[str, Any]) -> dict[str, Any]:
+def fetch_company_announcements(
+    symbol: str,
+    market: str | None = None,
+    *,
+    query: str | None = None,
+    limit: int = 10,
+    days: int = 14,
+) -> dict[str, Any]:
     """Fetch announcements or filings from free sources."""
 
-    query = _query(arguments)
-    if not query:
+    clean_query = _clean_query(symbol=symbol, query=query)
+    if not clean_query:
         return _error_payload("announcement", "market_intel_announcements", "", "缺少 query 参数。")
 
-    symbol = _symbol(arguments, query)
-    market = _market(arguments, symbol)
+    return _fetch_formal_disclosures(
+        symbol=symbol,
+        market=market,
+        query=clean_query,
+        limit=limit,
+        days=days,
+        data_type="announcement",
+        source="market_intel_announcements",
+        empty_error="免费公告/filings 源没有返回可用条目。",
+    )
+
+
+def fetch_filings(
+    symbol: str,
+    market: str | None = None,
+    *,
+    query: str | None = None,
+    limit: int = 10,
+    days: int = 120,
+) -> dict[str, Any]:
+    """Fetch formal filings and disclosure documents for a company."""
+
+    clean_query = _clean_query(symbol=symbol, query=query)
+    if not clean_query:
+        return _error_payload("filing", "market_intel_filings", "", "缺少 symbol 或 query 参数。")
+
+    return _fetch_formal_disclosures(
+        symbol=symbol,
+        market=market,
+        query=clean_query,
+        limit=limit,
+        days=days,
+        data_type="filing",
+        source="market_intel_filings",
+        empty_error="免费正式披露源没有返回可用条目。",
+    )
+
+
+def fetch_market_event_context(query: str, *, limit: int = 10, days: int = 14) -> dict[str, Any]:
+    """Fetch a combined news and formal-disclosure context for a market query."""
+
+    clean_query = str(query or "").strip()
+    if not clean_query:
+        return _error_payload("market_event_context", "market_intel_context", "", "缺少 query 参数。")
+
+    symbol = _symbol_from_query(clean_query)
+    market = _market(None, symbol)
+    news = fetch_company_news(symbol or clean_query, market=market, query=clean_query, limit=limit)
+    announcements = fetch_company_announcements(
+        symbol or clean_query,
+        market=market,
+        query=clean_query,
+        limit=limit,
+        days=days,
+    )
+    news_items = _items_from_payload(news)
+    announcement_items = _items_from_payload(announcements)
+    attempts = _prefixed_attempts("news", news.get("source_chain")) + _prefixed_attempts(
+        "announcement",
+        announcements.get("source_chain"),
+    )
+    coverage = {
+        "news": _coverage_value(news, "news"),
+        "announcement": _coverage_value(announcements, "announcement"),
+    }
+    error_text = "；".join(
+        item
+        for item in [str(news.get("error") or ""), str(announcements.get("error") or "")]
+        if item
+    )
+    status = "ok" if news_items or announcement_items else _combined_status([news, announcements])
+    return {
+        "status": status,
+        "source": "market_intel_context",
+        "data_type": "market_event_context",
+        "data": {
+            "query": clean_query,
+            "symbol": symbol,
+            "market": market,
+            "news": news_items,
+            "announcements": announcement_items,
+        },
+        "freshness": {
+            "as_of": datetime.now().replace(microsecond=0).isoformat(),
+            "stale": False,
+            "stale_reason": "",
+        },
+        "warnings": [],
+        "error": "" if news_items or announcement_items else error_text,
+        "source_chain": attempts,
+        "data_quality": {
+            "source_chain": attempts,
+            "freshness": "fresh" if news_items or announcement_items else "unknown",
+            "coverage": coverage,
+            "limitations": _dedupe_text([error_text] if error_text else []),
+        },
+    }
+
+
+def _fetch_formal_disclosures(
+    *,
+    symbol: str,
+    market: str | None,
+    query: str,
+    limit: int,
+    days: int,
+    data_type: str,
+    source: str,
+    empty_error: str,
+) -> dict[str, Any]:
+    clean_symbol = _clean_symbol_arg(symbol, query)
+    clean_market = _market(market, clean_symbol)
     attempts: list[dict[str, Any]] = []
     items: list[dict[str, Any]] = []
 
-    if market == "CN":
-        result = _akshare_stock_notices(query=query, symbol=symbol, days=_days(arguments))
+    if clean_market == "CN":
+        result = _akshare_stock_notices(query=query, symbol=clean_symbol, days=_bounded_days(days))
         attempts.append(_attempt("akshare_stock_notice_report", result))
         items.extend(result.get("items") or [])
-    elif market == "US":
-        result = _sec_company_filings(symbol or query)
+    elif clean_market == "US":
+        result = _sec_company_filings(clean_symbol or query)
         attempts.append(_attempt("sec_company_submissions", result))
         items.extend(result.get("items") or [])
     else:
         for provider_name, provider in (
-            ("akshare_stock_notice_report", lambda value: _akshare_stock_notices(query=query, symbol=value, days=_days(arguments))),
+            (
+                "akshare_stock_notice_report",
+                lambda value: _akshare_stock_notices(query=query, symbol=value, days=_bounded_days(days)),
+            ),
             ("sec_company_submissions", _sec_company_filings),
         ):
-            result = provider(symbol or query)
+            result = provider(clean_symbol or query)
             attempts.append(_attempt(provider_name, result))
             items.extend(result.get("items") or [])
             if items:
                 break
 
     return _standard_intel_payload(
-        data_type="announcement",
-        source="market_intel_announcements",
+        data_type=data_type,
+        source=source,
         query=query,
-        symbol=symbol,
-        market=market,
-        items=_dedupe_items(items)[: _limit(arguments)],
+        symbol=clean_symbol,
+        market=clean_market,
+        items=_dedupe_items(items)[: _bounded_limit(limit)],
         attempts=attempts,
-        empty_error="免费公告/filings 源没有返回可用条目。",
+        empty_error=empty_error,
     )
 
 
@@ -144,19 +272,23 @@ def _akshare_stock_notices(*, query: str, symbol: str, days: int) -> dict[str, A
         }
 
     categories = _notice_categories(query)
+    identity_tokens = _identity_tokens(query, symbol)
     tokens = _filter_tokens(query, symbol)
     items: list[dict[str, Any]] = []
     errors: list[str] = []
     for day in _recent_dates(days):
         for category in categories:
             try:
-                frame = ak.stock_notice_report(symbol=category, date=day)
+                with contextlib.redirect_stderr(io.StringIO()):
+                    frame = ak.stock_notice_report(symbol=category, date=day)
             except Exception as exc:
                 errors.append(f"{category}/{day}: {exc}")
                 continue
             for row in _frame_records(frame):
                 text = " ".join(_pick(row, key) for key in ("代码", "名称", "公告标题", "公告类型"))
-                if tokens and not any(token in text for token in tokens):
+                if identity_tokens and not any(token in text for token in identity_tokens):
+                    continue
+                if not identity_tokens and tokens and not any(token in text for token in tokens):
                     continue
                 items.append(
                     {
@@ -310,7 +442,7 @@ def _standard_intel_payload(
         "data_quality": {
             "source_chain": attempts,
             "freshness": "fresh" if items else "unknown",
-            "coverage": {data_type: "ok" if items else "missing"},
+            "coverage": {data_type: _coverage_from_items(items, attempts)},
             "limitations": [error_text] if error_text else [],
         },
     }
@@ -329,14 +461,21 @@ def _error_payload(data_type: str, source: str, query: str, error_text: str) -> 
     )
 
 
-def _query(arguments: dict[str, Any]) -> str:
-    return str(arguments.get("query") or arguments.get("symbol") or arguments.get("stock_code") or "").strip()
+def _clean_query(*, symbol: str, query: str | None) -> str:
+    clean_query = str(query or "").strip()
+    if clean_query:
+        return clean_query
+    return str(symbol or "").strip()
 
 
-def _symbol(arguments: dict[str, Any], query: str) -> str:
-    explicit = str(arguments.get("symbol") or arguments.get("stock_code") or "").strip()
-    if explicit:
-        return explicit.upper()
+def _clean_symbol_arg(symbol: str, query: str) -> str:
+    explicit = str(symbol or "").strip().upper()
+    if explicit and (" " not in explicit) and ("，" not in explicit) and ("," not in explicit):
+        return explicit
+    return _symbol_from_query(query)
+
+
+def _symbol_from_query(query: str) -> str:
     for token in query.replace("，", " ").replace(",", " ").split():
         clean = token.strip().strip("()（）[]【】").upper()
         if clean.isdigit() and len(clean) == 6:
@@ -344,25 +483,72 @@ def _symbol(arguments: dict[str, Any], query: str) -> str:
     return ""
 
 
-def _market(arguments: dict[str, Any], symbol: str) -> str:
-    explicit = str(arguments.get("market") or "").strip().upper()
+def _market(market: str | None, symbol: str) -> str:
+    explicit = str(market or "").strip().upper()
     if explicit:
         return "CN" if explicit in {"A", "ASHARE", "A_SHARE"} else explicit
     return infer_market(symbol) if symbol else ""
 
 
-def _limit(arguments: dict[str, Any]) -> int:
+def _bounded_limit(value: int) -> int:
     try:
-        return max(1, min(int(arguments.get("limit") or 10), 20))
+        return max(1, min(int(value or 10), 20))
     except (TypeError, ValueError):
         return 10
 
 
-def _days(arguments: dict[str, Any]) -> int:
+def _bounded_days(value: int) -> int:
     try:
-        return max(1, min(int(arguments.get("days") or 14), 60))
+        return max(1, min(int(value or 14), 365))
     except (TypeError, ValueError):
         return 14
+
+
+def _items_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    items = data.get("items")
+    return [dict(item) for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+
+
+def _prefixed_attempts(data_type: str, attempts: Any) -> list[dict[str, Any]]:
+    if not isinstance(attempts, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for item in attempts:
+        if not isinstance(item, dict):
+            continue
+        clean = dict(item)
+        clean["data_type"] = data_type
+        result.append(clean)
+    return result
+
+
+def _coverage_value(payload: dict[str, Any], data_type: str) -> str:
+    quality = payload.get("data_quality") if isinstance(payload.get("data_quality"), dict) else {}
+    coverage = quality.get("coverage") if isinstance(quality.get("coverage"), dict) else {}
+    return str(coverage.get(data_type) or "missing")
+
+
+def _coverage_from_items(items: list[dict[str, Any]], attempts: list[dict[str, Any]]) -> str:
+    if not items:
+        return "missing"
+    failed_attempts = [
+        item
+        for item in attempts
+        if str(item.get("status") or "") not in {"", "ok"}
+    ]
+    return "partial" if failed_attempts else "ok"
+
+
+def _combined_status(payloads: list[dict[str, Any]]) -> str:
+    statuses = [str(item.get("status") or "") for item in payloads]
+    if statuses and all(status == "provider_not_configured" for status in statuses):
+        return "provider_not_configured"
+    if any(status == "error" for status in statuses):
+        return "error"
+    if any(status == "empty" for status in statuses):
+        return "empty"
+    return "missing"
 
 
 def _clean_cn_symbol(symbol: str) -> str:
@@ -402,6 +588,34 @@ def _filter_tokens(query: str, symbol: str) -> list[str]:
     for token in query.replace("，", " ").replace(",", " ").split():
         clean = token.strip().strip("()（）[]【】")
         if len(clean) >= 2 and not clean.lower() in {"最新", "新闻", "公告", "财报", "风险"}:
+            tokens.append(clean)
+    return _dedupe_text(tokens)
+
+
+def _identity_tokens(query: str, symbol: str) -> list[str]:
+    tokens = []
+    clean_symbol = _clean_cn_symbol(symbol)
+    if clean_symbol:
+        tokens.append(clean_symbol)
+    generic = {
+        "最新",
+        "新闻",
+        "公告",
+        "财报",
+        "风险",
+        "分红",
+        "利润分配",
+        "权益分派",
+        "实施公告",
+        "年报",
+        "半年报",
+        "季报",
+    }
+    for token in query.replace("，", " ").replace(",", " ").split():
+        clean = token.strip().strip("()（）[]【】")
+        if clean.isdigit() and len(clean) == 6:
+            tokens.append(clean)
+        elif len(clean) >= 3 and clean not in generic and not clean.lower().isascii():
             tokens.append(clean)
     return _dedupe_text(tokens)
 

@@ -7,6 +7,7 @@ from dataclasses import dataclass, asdict
 from datetime import date
 from typing import Any
 
+from src.market_intel import fetch_filings
 from src.portfolio_ledger import Holding, PortfolioEvent, read_holdings, read_portfolio_events
 
 
@@ -55,6 +56,13 @@ def build_cn_dividend_disclosure_review(
         source_events,
         as_of=current_date,
     )
+    should_search_announcements = True if search_announcements is None else bool(search_announcements)
+    announcement_results = (
+        fetch_dividend_filing_candidates(review_items, limit_per_symbol=limit_per_symbol or 3)
+        if should_search_announcements
+        else []
+    )
+    matched_announcement_count = sum(1 for item in announcement_results if item.get("candidate_count"))
 
     return {
         "status": "manual_financial_report_review_required" if review_items else "ok",
@@ -77,18 +85,19 @@ def build_cn_dividend_disclosure_review(
             "或权益分派实施公告后，才允许更新每股年分红或记录到账分红。"
         ),
         "provider": {
-            "name": "本地财报核验工作流",
-            "status": "manual_review",
+            "name": "market_intel 财报/公告核验",
+            "status": _announcement_provider_status(announcement_results),
             "error": "",
-            "note": "定时任务只生成财报和正式公告核验队列，不使用行情源股息字段作为现金流事实。",
+            "note": "定时任务基于财报、利润分配公告和权益分派实施公告生成候选核验项，不使用行情源股息字段作为现金流事实。",
         },
         "holding_count": len(dividend_holdings),
         "holdings": [asdict(item) for item in dividend_holdings],
-        "announcement_results": [],
+        "announcement_results": announcement_results,
+        "matched_announcement_count": matched_announcement_count,
         "financial_report_review_items": [asdict(item) for item in review_items],
         "review_item_count": len(review_items),
         "warnings": [
-            "当前未接入自动财报/公告数据源，本任务只生成核验清单和操作边界。",
+            "公告候选项只作为核验入口，更新账本前仍需人工打开正式披露文件确认。",
             "现金流分红数据必须由财报、利润分配公告、权益分派实施公告或实际到账流水确认。",
         ],
     }
@@ -106,12 +115,29 @@ def format_cn_dividend_disclosure_review(snapshot: dict[str, Any]) -> str:
 
     holding_count = int(snapshot.get("holding_count") or 0)
     review_items = snapshot.get("financial_report_review_items") or []
+    announcement_results = snapshot.get("announcement_results") or []
+    matched_announcement_count = int(snapshot.get("matched_announcement_count") or 0)
     high_priority = [item for item in review_items if item.get("priority") == "high"]
     lines = [
         "境内红利财报核验",
         f"我已把范围锁定在 {holding_count} 只 A 股红利持仓，只认企业财报和正式分配公告。",
-        "本次只生成财报和正式公告核验队列，不使用行情源股息字段。",
+        "本次基于财报、利润分配公告和权益分派实施公告生成核验队列，不使用行情源股息字段。",
     ]
+    if announcement_results:
+        lines.append(f"公告候选：{matched_announcement_count}/{len(announcement_results)} 只持仓返回候选披露。")
+        for result in announcement_results[:5]:
+            symbol = str(result.get("symbol") or "")
+            name = str(result.get("name") or "")
+            candidates = result.get("candidates") or []
+            if candidates:
+                first = candidates[0]
+                dividend = first.get("cash_dividend_per_share")
+                dividend_text = f"，识别每股现金分红 {dividend}" if dividend is not None else ""
+                lines.append(f"- {symbol} {name}：{first.get('title')}{dividend_text}")
+            else:
+                coverage = (result.get("data_quality") or {}).get("coverage") or {}
+                error = str(result.get("error") or "")
+                lines.append(f"- {symbol} {name}：公告候选缺口 {coverage.get('filing', 'missing')} {error[:80]}")
 
     if not review_items:
         lines.append("本次没有生成待核验项；若后续披露年报、半年报或权益分派实施公告，再人工核验并更新账本。")
@@ -125,6 +151,42 @@ def format_cn_dividend_disclosure_review(snapshot: dict[str, Any]) -> str:
         lines.append(f"- {symbol} {name}：{reason}")
     lines.append("核验后再用 /holding 更新每股年分红，或用 /dividend 记录实际到账现金分红。")
     return "\n".join(lines)
+
+
+def fetch_dividend_filing_candidates(
+    review_items: list[FinancialReportReviewItem],
+    *,
+    limit_per_symbol: int = 3,
+    days: int = 30,
+) -> list[dict[str, Any]]:
+    """Fetch formal filing candidates for dividend review items."""
+
+    results: list[dict[str, Any]] = []
+    for item in review_items:
+        query = f"{item.symbol} {item.name} 财报 分红 利润分配 权益分派 实施公告"
+        payload = fetch_filings(
+            item.symbol,
+            market="CN",
+            query=query,
+            limit=limit_per_symbol,
+            days=days,
+        )
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        candidates = [_normalize_dividend_filing_candidate(row) for row in data.get("items") or [] if isinstance(row, dict)]
+        results.append(
+            {
+                "symbol": item.symbol,
+                "name": item.name,
+                "status": payload.get("status"),
+                "source": payload.get("source"),
+                "data_quality": payload.get("data_quality") or {},
+                "source_chain": payload.get("source_chain") or [],
+                "error": payload.get("error") or "",
+                "candidate_count": len(candidates),
+                "candidates": candidates,
+            }
+        )
+    return results
 
 
 def list_cn_dividend_holdings(holdings: list[Holding] | None = None) -> list[DividendHolding]:
@@ -236,6 +298,37 @@ def parse_cash_dividend_per_share(text: str) -> float | None:
             continue
         return round(float(match.group(1)) / divisor, 6)
     return None
+
+
+def _normalize_dividend_filing_candidate(row: dict[str, Any]) -> dict[str, Any]:
+    title = str(row.get("title") or "")
+    summary = str(row.get("summary") or "")
+    category = str(row.get("category") or "")
+    text = " ".join(item for item in [title, summary, category] if item)
+    return {
+        "symbol": row.get("symbol"),
+        "name": row.get("name"),
+        "title": title,
+        "category": category,
+        "published_at": row.get("published_at"),
+        "url": row.get("url"),
+        "source": row.get("source"),
+        "provider": row.get("provider"),
+        "cash_dividend_per_share": parse_cash_dividend_per_share(text),
+    }
+
+
+def _announcement_provider_status(results: list[dict[str, Any]]) -> str:
+    if not results:
+        return "not_requested"
+    if any(item.get("candidate_count") for item in results):
+        return "ok"
+    statuses = {str(item.get("status") or "") for item in results}
+    if statuses == {"provider_not_configured"}:
+        return "provider_not_configured"
+    if "error" in statuses:
+        return "error"
+    return "empty"
 
 
 def _is_cn_equity(holding: Holding) -> bool:

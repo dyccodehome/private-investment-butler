@@ -46,7 +46,12 @@ class SkillsTest(unittest.TestCase):
         self.assertIn("data_quality", payload)
         self.assertEqual(payload["data_quality"]["coverage"]["news"], "missing")
         self.assertIn("akshare", payload["error"])
-        fetch_news.assert_called_once_with({"query": "AI 半导体 最新新闻"})
+        fetch_news.assert_called_once_with(
+            "AI 半导体 最新新闻",
+            market="",
+            query="AI 半导体 最新新闻",
+            limit=10,
+        )
 
     def test_announcement_search_uses_market_intel_provider(self) -> None:
         with patch("src.skills.fetch_company_announcements") as fetch_announcements:
@@ -73,7 +78,13 @@ class SkillsTest(unittest.TestCase):
         self.assertIn("data_quality", payload)
         self.assertEqual(payload["data_quality"]["coverage"]["announcement"], "missing")
         self.assertIn("akshare", payload["error"])
-        fetch_announcements.assert_called_once_with({"query": "600900 长江电力 年报 分红"})
+        fetch_announcements.assert_called_once_with(
+            "600900",
+            market="",
+            query="600900 长江电力 年报 分红",
+            limit=10,
+            days=30,
+        )
 
     def test_trade_history_reads_local_chat_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

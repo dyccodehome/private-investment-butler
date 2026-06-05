@@ -1128,7 +1128,7 @@ Worker、Auditor、Knowledge Absorber 可以使用不同 provider/model/reasonin
 
 - A 股：Yahoo Finance / `yfinance`
 - 美股：Longbridge CLI quote/positions
-- 新闻、公告、研报：暂未完成统一迁移
+- 新闻和公告：已收敛到 `src.market_intel`；研报暂未接入
 
 原则：
 
@@ -1194,17 +1194,18 @@ Worker、Auditor、Knowledge Absorber 可以使用不同 provider/model/reasonin
 2. 缺少依赖、凭据或外部源失败时返回明确错误，而不是空数据。
 3. 在 Worker prompt 中明确区分 `ok/error/missing`。
 
-### 痛点 3：公告、研报数据还未统一迁移
+### 痛点 3：研报数据还未统一迁移
 
 现状：
 
 - 行情 Provider 已迁移到 yfinance/Longbridge。
-- `news-search` 和 `announcement-search` 已接入免费只读情报 Provider；缺少本地依赖或外部源不可用时返回结构化缺口。
-- 公告、研报仍处于旧 Skill 或未完全真实执行状态。
+- `news-search` 和 `announcement-search` 已接入 `src.market_intel`，底层提供 `fetch_company_news`、`fetch_company_announcements`、`fetch_filings` 和 `fetch_market_event_context`。
+- 公告和 SEC filings 已统一返回结构化 payload；缺少本地依赖或外部源不可用时返回结构化缺口。
+- 研报仍未接入本阶段。
 
 改造路径：
 
-1. 实现公告/研报 Provider。
+1. 评估是否需要研报 Provider。
 2. 把新闻、公告和研报纳入 Growth 每日复盘。
 3. 对数据新鲜度增加 `freshness` 字段。
 
@@ -1306,4 +1307,4 @@ Worker、Auditor、Knowledge Absorber 可以使用不同 provider/model/reasonin
 3. 实现 `/reconcile A`，补齐 A 股本地账本可信度。
 4. 统一所有 Skill payload schema。
 5. 完成研究档案闭环。
-6. 接入新闻、公告、研报 Provider。
+6. 评估研报 Provider，并把 `market_intel` 情报上下文纳入更多复盘链路。
