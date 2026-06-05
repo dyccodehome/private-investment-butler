@@ -65,9 +65,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "allowed_skills": [
                 "portfolio_snapshot",
                 "research_dossier",
-                "hithink-market-query",
+                "market-data",
                 "trade_history",
                 "news-search",
+                "announcement-search",
             ],
         },
         "Growth_Engine": {
@@ -77,9 +78,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "max_output_tokens": 4096,
             "allowed_skills": [
                 "research_dossier",
-                "hithink-market-query",
+                "market-data",
                 "trade_history",
                 "news-search",
+                "announcement-search",
             ],
         },
     },
@@ -110,10 +112,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "token_env": "YUQUE_TOKEN",
         "namespace_env": "YUQUE_NAMESPACE",
         "archive_dir_env": "YUQUE_ARCHIVE_DIR",
-    },
-    "iwencai": {
-        "api_key_env": "IWENCAI_API_KEY",
-        "api_url_env": "IWENCAI_API_URL",
     },
     "token_monitor": {
         "enabled": True,

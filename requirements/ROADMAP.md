@@ -15,16 +15,16 @@
 - [x] README 已拆成英文版 `README.md` 和中文版 `README.zh-CN.md`，并按当前架构重写。
 - [x] P0/P1/P2 数据与复盘能力已落地并提交：`119b257 feat: add governed market intelligence and review records`。
 - [x] 行情 fallback 已落地：A 股走 `yfinance`，美股 Longbridge 失败后 fallback 到 `yfinance`，并记录 `source_chain`。
-- [x] 新闻/公告披露已接入 Skill：`news-search` 和 `announcement-search` 都会返回标准 Skill payload；未配置凭据时标记为数据质量缺口。
+- [x] 新闻/公告披露已接入 Skill：`news-search` 和 `announcement-search` 都会返回标准 Skill payload；依赖缺失或外部源不可用时标记为数据质量缺口。
 - [x] 市场阶段上下文已落地：`src/market_phase.py` 会为 A 股和美股补充盘前、盘中、午休、盘后和非交易日信息。
 - [x] 数据质量摘要已落地：`src/data_quality.py` 会汇总覆盖度、鲜度、来源链和限制，并写入审计输入、会话黑匣子和 Decision Record。
 - [x] 输出契约和历史判断快照已落地：`src/output_contract.py` 会检查结论、事实、风险和下一步动作，并生成 `decision_snapshot`。
 - [x] 决策复盘统计已落地：`src/review_stats.py` 和 `scripts/decision_review_report.py` 可按日期/区间统计决策、审计、契约缺口和数据质量缺口。
-- [x] A 股红利定时任务已改为财报核验清单：`src/dividend_disclosure.py` 不再调用问财，也不使用行情源股息字段作为现金流事实。
+- [x] A 股红利定时任务已改为财报核验清单：`src/dividend_disclosure.py` 不使用行情源股息字段作为现金流事实。
 - [x] 飞书基础运行时代码已具备：普通文本、Slash command、补丁卡片、审计拒绝卡片、会话锁和事件去重均已有实现或单元测试。
 - [x] 完整离线测试通过：`python3 -m unittest discover` 当前为 107 个测试通过。
 - [~] 真实飞书生产 smoke test 已部分完成：长连接启动和主动推送已通过；消息接收、按钮回调和定时任务真实执行推送仍需人工配合验证。
-- [ ] 仍需真实 Provider smoke test：DeepSeek 模型名、Yahoo Finance A 股数据、Longbridge CLI、新闻/公告 Provider 凭据。
+- [ ] 仍需真实 Provider smoke test：DeepSeek 模型名、Yahoo Finance A 股数据、Longbridge CLI、AkShare 新闻/公告和 SEC filings。
 - [ ] 仍需把 Roadmap 中旧需求文档继续归档或改状态，避免 active 目录保留已完成阶段的历史文档。
 
 ## 已完成事项
@@ -97,7 +97,7 @@
 - [ ] 配置本地 `.env`，让项目可以真实运行。
   - 模型调用需要：`DEEPSEEK_API_KEY` 或选定模型厂商的 API Key。
   - 飞书接入需要：`FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_VERIFICATION_TOKEN`、`FEISHU_ENCRYPT_KEY`。
-  - 行情/新闻 Skill 需要：`IWENCAI_API_KEY`。
+  - 免费数据源依赖：`akshare`、`yfinance`；美股公告使用 SEC 官方公开接口。
 - [ ] 校验 `config.yaml` 里的模型名称和 provider 协议是否真实可用。
   - 当前默认使用 `deepseek` 和 `deepseek-v4-pro`。
   - 需要确认该模型名能被当前厂商 API 接受。
@@ -122,7 +122,7 @@
   - [x] 美股金融数据入口切到 Longbridge。
   - [x] 美股行情增加 fallback：Longbridge 不可用时切到 yfinance。
   - [x] 行情 payload 增加市场阶段上下文和数据质量摘要。
-  - [x] 旧 `hithink-*` 行情、财务、基础信息 Skill 改为兼容入口或别名。
+  - [x] `market-data` Skill 接入统一行情 Provider。
   - [x] 新闻、公告 Skill 已接入标准 payload。
   - [ ] 研报暂未接入本阶段。
 - [~] 实现长桥美股持仓只读同步。
@@ -147,14 +147,14 @@
   - 认证优先使用 OAuth；如需传统 API Key，则只放在 `.env`，不提交。
   - SDK 适合后续 Docker/长期运行，CLI 适合当前快速接入和调试。
 - [ ] A 股持仓继续以本地账本为主数据源。
-  - 不依赖同花顺个人持仓 API。
+  - A 股持仓以本地账本为主数据源。
   - 用 `/buy`、`/sell`、`/dividend` 维护交易事实。
   - 用月度或季度人工对账修正持仓。
 - [ ] 增加 A 股对账流程 `/reconcile A`。
   - 对比本地账本与券商 App 截图/导出表。
   - 记录人工确认日期。
   - 超过 30 天未确认时，在分红分析里提示数据可能过期。
-- [x] 实现 `hithink-market-query` 的真实执行 payload。
+- [x] 实现 `market-data` 的真实执行 payload。
   - 已接入统一市场数据 Provider。
   - 返回结构化行情事实。
 - [x] 实现 `news-search` 的真实执行 payload。
@@ -174,8 +174,8 @@
 - [x] 新增披露数据质量摘要。
   - 模块：`src/data_quality.py`
   - 用于 Worker、Auditor、Decision Record 和复盘统计。
-- [x] 为缺少 Skill 凭据增加基础错误处理。
-  - 缺少 API Key 时，不应表现得像“市场结果为空”。
+- [x] 为 Skill 数据源缺口增加基础错误处理。
+  - 缺少依赖、凭据或外部源失败时，不应表现得像“市场结果为空”。
 - [x] 新增 Decision Record。
   - 写入：`runtime/decisions/YYYY-MM-DD.jsonl`
   - 用于投资审计复盘，和技术 Trace 分离。
@@ -340,7 +340,7 @@
 
 ## 备注
 
-- 2026-05-25 已确认后续架构：本地持仓账本是主数据源，券商 API 只作为同步和对账来源；A 股不依赖同花顺个人持仓 API，美股后续接入长桥只读持仓同步。
+- 2026-05-25 已确认后续架构：本地持仓账本是主数据源，券商 API 只作为同步和对账来源；A 股持仓以本地账本为准，美股后续接入长桥只读持仓同步。
 - 2026-05-25 已重新评估长桥接入方式。MCP 更适合 AI 客户端临时工具调用，不作为项目主接入；本项目优先接 Longbridge CLI 的只读 JSON 输出，后续再视稳定性切换 Python SDK。
 - 2026-05-25 已确认外部命令安全边界：LLM 不能自由调用 longbridge 或 shell，只能触发固定 Python 白名单工具。
 - 2026-05-25 已实现 Longbridge 只读同步提案：Cash Anchor 仅保留 QQQI、XQQI、TQQQ，其他长桥持仓过滤。

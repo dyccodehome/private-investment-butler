@@ -50,7 +50,7 @@ private_investment_butler/
 │   ├── trade_history/
 │   ├── news-search/
 │   ├── announcement-search/
-│   └── hithink-market-query/
+│   └── market-data/
 ├── src/
 │   ├── app_config.py
 │   ├── command_registry.py
@@ -151,7 +151,7 @@ private_investment_butler/
 
 关键原则：
 
-- A 股个人持仓不依赖同花顺券商 API。
+- A 股个人持仓以本地账本为准，不依赖外部券商持仓接口。
 - 本地账本是持仓、成本、投入、分红流水的事实来源。
 - Provider 查询结果用于分析上下文，不自动覆盖本地账本。
 
@@ -193,7 +193,7 @@ private_investment_butler/
 }
 ```
 
-`hithink-market-query` 已通过 `src/skills.py` 接入统一 Provider。旧的财务、基本资料、选股、港股、期货、宏观和研报类 Skill 已删除；需要的核查顺序已合并进保留的行情、新闻、公告和研究档案 Skill。
+`market-data` 已通过 `src/skills.py` 接入统一 Provider。旧的财务、基本资料、选股、港股、期货、宏观和研报类 Skill 已删除；需要的核查顺序已合并进保留的行情、新闻、公告和研究档案 Skill。
 
 ### Growth Engine 本地持仓、自选和复盘
 
@@ -1185,13 +1185,13 @@ Worker、Auditor、Knowledge Absorber 可以使用不同 provider/model/reasonin
 现状：
 
 - Market Data Provider 已统一 `{status, source, market, symbol, data, error}`。
-- `trade_history`、`news-search`、`announcement-search`、`hithink-market-query` 已返回结构化 payload。
+- `trade_history`、`news-search`、`announcement-search`、`market-data` 已返回结构化 payload。
 - `portfolio_snapshot` 和 `research_dossier` 仍保留业务快照结构，后续可继续收敛到统一 status schema。
 
 改造路径：
 
 1. 为 `portfolio_snapshot`、`research_dossier` 统一 status schema。
-2. 缺少凭据时返回 `not_configured` 或明确错误，而不是空数据。
+2. 缺少依赖、凭据或外部源失败时返回明确错误，而不是空数据。
 3. 在 Worker prompt 中明确区分 `ok/error/missing`。
 
 ### 痛点 3：公告、研报数据还未统一迁移
@@ -1199,7 +1199,7 @@ Worker、Auditor、Knowledge Absorber 可以使用不同 provider/model/reasonin
 现状：
 
 - 行情 Provider 已迁移到 yfinance/Longbridge。
-- `news-search` 已接入同花顺问财新闻搜索 payload；缺少 `IWENCAI_API_KEY` 时返回 `not_configured`。
+- `news-search` 和 `announcement-search` 已接入免费只读情报 Provider；缺少本地依赖或外部源不可用时返回结构化缺口。
 - 公告、研报仍处于旧 Skill 或未完全真实执行状态。
 
 改造路径：

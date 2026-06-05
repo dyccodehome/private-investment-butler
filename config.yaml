@@ -46,7 +46,7 @@ frameworks:
     max_output_tokens: 4096
     allowed_skills:
       - portfolio_snapshot
-      - hithink-market-query
+      - market-data
       - research_dossier
       - trade_history
       - news-search
@@ -57,10 +57,11 @@ frameworks:
     reasoning_effort: high
     max_output_tokens: 4096
     allowed_skills:
-      - hithink-market-query
+      - market-data
       - research_dossier
       - trade_history
       - news-search
+      - announcement-search
 
 agents:
   auditor:
@@ -86,10 +87,6 @@ yuque:
   token_env: YUQUE_TOKEN
   namespace_env: YUQUE_NAMESPACE
   archive_dir_env: YUQUE_ARCHIVE_DIR
-
-iwencai:
-  api_key_env: IWENCAI_API_KEY
-  api_url_env: IWENCAI_API_URL
 
 scheduler:
   enabled: true

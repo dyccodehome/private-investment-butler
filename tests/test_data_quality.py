@@ -11,7 +11,7 @@ class DataQualityTest(unittest.TestCase):
         quality = payload_data_quality(
             {
                 "status": "provider_not_configured",
-                "source": "iwencai_news_search",
+                "source": "market_intel_news",
                 "data_type": "news",
                 "data": {"items": []},
                 "freshness": {"stale": False},
@@ -29,7 +29,7 @@ class DataQualityTest(unittest.TestCase):
             payload={
                 "result": {
                     "status": "provider_not_configured",
-                    "source": "iwencai_news_search",
+                    "source": "market_intel_news",
                     "data_type": "news",
                     "data": {},
                     "freshness": {"stale": False},

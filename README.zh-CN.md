@@ -117,7 +117,7 @@ frameworks/{strategy}/patch_archive/
 ```json
 {
   "status": "ok | error | missing | empty | provider_not_configured | unauthorized",
-  "source": "local | yfinance | longbridge | iwencai_news_search | ...",
+  "source": "local | yfinance | longbridge | market_intel_news | market_intel_announcements | ...",
   "data_type": "portfolio_snapshot | market_data | news | announcement | research_dossier | trade_history",
   "data": {},
   "freshness": {
@@ -171,7 +171,6 @@ cp .env.example .env
 | `FEISHU_APP_ID`, `FEISHU_APP_SECRET` | 飞书长连接应用凭据。 |
 | `FEISHU_VERIFICATION_TOKEN`, `FEISHU_ENCRYPT_KEY` | 飞书事件校验配置。 |
 | `FEISHU_DEFAULT_CHAT_ID` | 定时任务默认推送会话。 |
-| `IWENCAI_API_KEY`, `IWENCAI_API_URL` | 可选新闻和公告 Provider。 |
 | `YUQUE_TOKEN`, `YUQUE_NAMESPACE`, `YUQUE_ARCHIVE_DIR` | 可选知识归档集成。 |
 
 运行本地检查：
@@ -202,7 +201,7 @@ python3 -m src.feishu_long_connection
 | 任务 | 市场 | 时间 | 用途 |
 | --- | --- | --- | --- |
 | `growth_cn_daily_review` | CN | 每日 16:30 Asia/Shanghai | A 股成长收盘复盘。 |
-| `cash_anchor_cn_dividend_review` | CN | 每日 18:30 Asia/Shanghai | A 股红利财报核验工作流，不依赖问财股息检索。 |
+| `cash_anchor_cn_dividend_review` | CN | 每日 18:30 Asia/Shanghai | A 股红利财报和正式公告核验工作流。 |
 | `cash_anchor_us_income_distribution_sync` | US | 每日 07:15 Asia/Shanghai | 美股收益分配同步与复核。 |
 | `growth_us_daily_review` | US | 每日 06:00 Asia/Shanghai | 美股成长收盘复盘。 |
 | `growth_weekly_review` | ALL | 周日 20:00 Asia/Shanghai | 成长框架周复盘。 |

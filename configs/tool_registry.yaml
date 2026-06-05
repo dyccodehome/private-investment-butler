@@ -29,7 +29,7 @@ tools:
     output_schema: SkillPayload
     data_type: research_dossier
 
-  hithink-market-query:
+  market-data:
     description: 通过统一市场数据 Provider 获取只读行情事实。
     risk_level: low
     access_type: external_read

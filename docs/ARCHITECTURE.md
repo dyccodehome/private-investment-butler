@@ -74,7 +74,7 @@ src/tool_registry.py
 ```json
 {
   "status": "ok | error | missing | empty | provider_not_configured | unauthorized",
-  "source": "local | yfinance | longbridge | iwencai_news_search | external",
+  "source": "local | yfinance | longbridge | market_intel_news | market_intel_announcements | external",
   "data_type": "portfolio_snapshot | market_data | news | research_dossier | trade_history",
   "data": {},
   "freshness": {

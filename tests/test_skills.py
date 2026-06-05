@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,8 +20,17 @@ class SkillsTest(unittest.TestCase):
         with self.assertRaises(PermissionError):
             skills.ensure_skill_allowed("Growth_Engine", "portfolio_snapshot")
 
-    def test_news_search_without_key_returns_not_configured_payload(self) -> None:
-        with patch.dict(os.environ, {"IWENCAI_API_KEY": ""}):
+    def test_news_search_uses_market_intel_provider(self) -> None:
+        with patch("src.skills.fetch_company_news") as fetch_news:
+            fetch_news.return_value = {
+                "status": "provider_not_configured",
+                "source": "market_intel_news",
+                "data_type": "news",
+                "data": {"query": "AI 半导体 最新新闻", "items": []},
+                "freshness": {"as_of": "2026-06-05T10:00:00", "stale": False, "stale_reason": ""},
+                "warnings": [],
+                "error": "缺少 akshare，未执行 A 股东方财富新闻源。",
+            }
             loaded = skills.load_skill(
                 "news-search",
                 {"query": "AI 半导体 最新新闻"},
@@ -32,15 +40,25 @@ class SkillsTest(unittest.TestCase):
         payload = loaded.to_payload()["result"]
 
         self.assertEqual(payload["status"], "provider_not_configured")
-        self.assertEqual(payload["source"], "iwencai_news_search")
+        self.assertEqual(payload["source"], "market_intel_news")
         self.assertEqual(payload["data_type"], "news")
         self.assertIn("freshness", payload)
         self.assertIn("data_quality", payload)
         self.assertEqual(payload["data_quality"]["coverage"]["news"], "missing")
-        self.assertIn("IWENCAI_API_KEY", payload["error"])
+        self.assertIn("akshare", payload["error"])
+        fetch_news.assert_called_once_with({"query": "AI 半导体 最新新闻"})
 
-    def test_announcement_search_without_key_returns_not_configured_payload(self) -> None:
-        with patch.dict(os.environ, {"IWENCAI_API_KEY": ""}):
+    def test_announcement_search_uses_market_intel_provider(self) -> None:
+        with patch("src.skills.fetch_company_announcements") as fetch_announcements:
+            fetch_announcements.return_value = {
+                "status": "provider_not_configured",
+                "source": "market_intel_announcements",
+                "data_type": "announcement",
+                "data": {"query": "600900 长江电力 年报 分红", "items": []},
+                "freshness": {"as_of": "2026-06-05T10:00:00", "stale": False, "stale_reason": ""},
+                "warnings": [],
+                "error": "缺少 akshare，未执行 A 股东方财富公告源。",
+            }
             loaded = skills.load_skill(
                 "announcement-search",
                 {"query": "600900 长江电力 年报 分红"},
@@ -50,11 +68,12 @@ class SkillsTest(unittest.TestCase):
         payload = loaded.to_payload()["result"]
 
         self.assertEqual(payload["status"], "provider_not_configured")
-        self.assertEqual(payload["source"], "iwencai_announcement_search")
+        self.assertEqual(payload["source"], "market_intel_announcements")
         self.assertEqual(payload["data_type"], "announcement")
         self.assertIn("data_quality", payload)
         self.assertEqual(payload["data_quality"]["coverage"]["announcement"], "missing")
-        self.assertIn("IWENCAI_API_KEY", payload["error"])
+        self.assertIn("akshare", payload["error"])
+        fetch_announcements.assert_called_once_with({"query": "600900 长江电力 年报 分红"})
 
     def test_trade_history_reads_local_chat_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

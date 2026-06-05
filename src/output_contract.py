@@ -129,7 +129,7 @@ def extract_historical_judgments(disclosures: list[Any]) -> dict[str, Any]:
 def extract_market_phase(disclosures: list[Any]) -> dict[str, Any]:
     for item in disclosures:
         if getattr(item, "skill_name", "") not in {
-            "hithink-market-query",
+            "market-data",
         }:
             continue
         result = _result_payload(item)

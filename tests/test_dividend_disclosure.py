@@ -32,7 +32,7 @@ class DividendDisclosureTest(unittest.TestCase):
         self.assertEqual(parse_cash_dividend_per_share("每10股派发现金红利43.00元"), 4.3)
         self.assertEqual(parse_cash_dividend_per_share("2025年度利润分配方案为10派5.01元"), 0.501)
 
-    def test_review_uses_manual_financial_report_workflow_without_iwencai(self) -> None:
+    def test_review_uses_manual_financial_report_workflow(self) -> None:
         holdings = [
             Holding("600900.SH", "长江电力", "A股", "CNY", 1000, 24, 24, 0, 0),
         ]
@@ -41,7 +41,7 @@ class DividendDisclosureTest(unittest.TestCase):
 
         self.assertEqual(snapshot["status"], "manual_financial_report_review_required")
         self.assertEqual(snapshot["provider"]["name"], "本地财报核验工作流")
-        self.assertIn("不调用问财", snapshot["provider"]["note"])
+        self.assertIn("正式公告核验队列", snapshot["provider"]["note"])
         self.assertIn("行情源返回的股息字段", snapshot["source_policy"]["rejected_sources"])
         self.assertIn("财报", snapshot["daily_review_step"])
         self.assertEqual(snapshot["financial_report_review_items"][0]["priority"], "high")

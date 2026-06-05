@@ -80,7 +80,7 @@ def build_cn_dividend_disclosure_review(
             "name": "本地财报核验工作流",
             "status": "manual_review",
             "error": "",
-            "note": "当前未接入自动财报/公告检索源；定时任务不调用问财，也不使用行情源股息字段。",
+            "note": "定时任务只生成财报和正式公告核验队列，不使用行情源股息字段作为现金流事实。",
         },
         "holding_count": len(dividend_holdings),
         "holdings": [asdict(item) for item in dividend_holdings],
@@ -110,7 +110,7 @@ def format_cn_dividend_disclosure_review(snapshot: dict[str, Any]) -> str:
     lines = [
         "境内红利财报核验",
         f"我已把范围锁定在 {holding_count} 只 A 股红利持仓，只认企业财报和正式分配公告。",
-        "当前未接入自动财报/公告检索源，本次不会调用问财，也不会使用行情源股息字段。",
+        "本次只生成财报和正式公告核验队列，不使用行情源股息字段。",
     ]
 
     if not review_items:

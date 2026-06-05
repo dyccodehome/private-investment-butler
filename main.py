@@ -283,7 +283,7 @@ def _skill_user_message(skill_name: str) -> str:
     messages = {
         "portfolio_snapshot": "我先读一下持仓、投入和分红账本。",
         "research_dossier": "我顺手看一下这个标的以前留下的研究档案。",
-        "hithink-market-query": "我查一下只读行情，主要用于价格和纪律判断。",
+        "market-data": "我查一下只读行情，主要用于价格和纪律判断。",
         "trade_history": "我回看一下之前有没有相关判断记录。",
         "news-search": "我查一下近期外部信息，避免只看账本。",
         "announcement-search": "我查一下企业公告，只取财报和分配公告口径。",

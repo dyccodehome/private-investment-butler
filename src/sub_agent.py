@@ -225,7 +225,7 @@ def stage_one_request_skills(state: AgentState) -> AgentState:
         requested_skills.extend(
             [
                 SkillRequest(
-                    skill_name="hithink-market-query",
+                    skill_name="market-data",
                     arguments={"symbol": symbol},
                     reason="需要通过统一市场数据 Provider 获取只读行情事实。",
                 ),
@@ -407,7 +407,7 @@ def _compact_skill_data(skill_name: str, data: dict[str, Any]) -> dict[str, Any]
         }
     if skill_name == "research_dossier":
         return _truncate_nested(data, max_string=500, max_items=8)
-    if skill_name == "hithink-market-query":
+    if skill_name == "market-data":
         payload = data.get("payload") if isinstance(data.get("payload"), dict) else data
         return _compact_market_payload(payload)
     return _truncate_nested(data, max_string=500, max_items=8)

@@ -24,7 +24,7 @@ STANDARD_SKILL_STATUSES = {
     "unauthorized",
 }
 TOOL_ALIASES = {
-    "market_snapshot": "hithink-market-query",
+    "market_snapshot": "market-data",
     "negative_news": "news-search",
 }
 

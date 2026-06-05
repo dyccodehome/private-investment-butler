@@ -106,13 +106,13 @@ class MarketDataTest(unittest.TestCase):
         self.assertEqual(result.source, "yfinance")
         self.assertIn("未安装 yfinance", result.error)
 
-    def test_hithink_market_skill_uses_unified_provider(self) -> None:
+    def test_market_data_skill_uses_unified_provider(self) -> None:
         skills.SKILL_REGISTRY = {}
         with patch("src.market_data.provider_router.fetch_quote") as fetch_quote:
             result_obj = Mock()
             result_obj.to_dict.return_value = {"status": "ok", "source": "yfinance", "symbol": "600900.SH"}
             fetch_quote.return_value = result_obj
-            payload = skills._execute_skill_payload("hithink-market-query", {"symbol": "600900.SH", "market": "CN"})
+            payload = skills._execute_skill_payload("market-data", {"symbol": "600900.SH", "market": "CN"})
 
         self.assertEqual(payload["source"], "yfinance")
         fetch_quote.assert_called_once_with("600900.SH", market="CN")

@@ -112,7 +112,7 @@ communication_gate.send_card(chat_id, title, text, actions)
 - 只有当子 Agent 明确申请 Skill 时，主管道才调用 `load_skill(...)`。
 - `LoadedSkill.to_payload()` 默认只返回 skill id、描述、路径、参数，不把完整 `SKILL.md` 塞进 LLM prompt。
 
-iwencai 相关 Skill 已从 `iwencai-investment-engine` 迁入 `skills/`。
+外部金融数据接入统一收敛在固定 Python Provider 和 `skills/` 边界内。
 
 ## 7.1 外部命令与券商数据边界
 
@@ -403,8 +403,6 @@ frameworks/{framework_id}/patch_archive/
 - `YUQUE_TOKEN`
 - `YUQUE_NAMESPACE`
 - `YUQUE_ARCHIVE_DIR`
-- `IWENCAI_API_KEY`
-- `IWENCAI_API_URL`
 
 `config.yaml` 只记录默认值和环境变量名，不存储真实密钥。
 

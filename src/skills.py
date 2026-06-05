@@ -7,15 +7,14 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib import error, request
 
 from src.data_quality import payload_data_quality
 from src.init import FRAMEWORKS_DIR, SKILLS_DIR
+from src.market_intel import fetch_company_announcements, fetch_company_news
 from src.portfolio_ledger import build_enriched_portfolio_snapshot
 from src.research_dossier import build_research_dossier_snapshot
 from src.tool_registry import ToolSpec, validate_skill_payload, validate_tool_access
@@ -65,7 +64,7 @@ class LoadedSkill:
 
 SKILL_ALIASES: dict[str, str] = {
     # 兼容早期管道状态的语义别名。
-    "market_snapshot": "hithink-market-query",
+    "market_snapshot": "market-data",
     "negative_news": "news-search",
 }
 
@@ -192,7 +191,7 @@ def _execute_skill_payload(skill_id: str, arguments: dict[str, Any]) -> dict[str
         return _execute_news_search(arguments)
     if skill_id == "announcement-search":
         return _execute_announcement_search(arguments)
-    if skill_id == "hithink-market-query":
+    if skill_id == "market-data":
         from src.market_data import fetch_market_data
 
         symbol = str(arguments.get("symbol") or arguments.get("stock_code") or arguments.get("query") or "").strip()
@@ -334,12 +333,12 @@ def _freshness(raw_payload: dict[str, Any]) -> dict[str, Any]:
 def _default_source(skill_id: str) -> str:
     if skill_id in {"portfolio_snapshot", "research_dossier", "trade_history"}:
         return "local"
-    if skill_id == "hithink-market-query":
+    if skill_id == "market-data":
         return "market_data_provider"
     if skill_id == "news-search":
-        return "iwencai_news_search"
+        return "market_intel_news"
     if skill_id == "announcement-search":
-        return "iwencai_announcement_search"
+        return "market_intel_announcements"
     return "skill_registry"
 
 
@@ -380,157 +379,15 @@ def _build_trade_history_snapshot(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _execute_news_search(arguments: dict[str, Any]) -> dict[str, Any]:
-    """调用同花顺问财新闻搜索；无凭据时返回明确未配置状态。"""
+    """Fetch company news through free read-only providers."""
 
-    query = str(arguments.get("query") or arguments.get("symbol") or arguments.get("stock_code") or "").strip()
-    if not query:
-        return {
-            "status": "error",
-            "source": "iwencai_news_search",
-            "data": {"query": "", "items": []},
-            "error": "缺少 query 参数。",
-        }
-
-    api_key = os.getenv("IWENCAI_API_KEY", "").strip()
-    if not api_key:
-        return {
-            "status": "not_configured",
-            "source": "iwencai_news_search",
-            "data": {"query": query, "items": []},
-            "error": "缺少 IWENCAI_API_KEY，未执行新闻搜索。",
-        }
-
-    api_url = os.getenv("IWENCAI_API_URL", "https://openapi.iwencai.com/v1/comprehensive/search").strip()
-    payload = {
-        "channels": ["news"],
-        "app_id": "AIME_SKILL",
-        "query": query,
-    }
-    req = request.Request(
-        api_url,
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with request.urlopen(req, timeout=20) as response:
-            raw = json.loads(response.read().decode("utf-8"))
-    except error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        return {
-            "status": "error",
-            "source": "iwencai_news_search",
-            "data": {"query": query, "items": []},
-            "error": f"同花顺问财新闻搜索 HTTP {exc.code}: {detail[:300]}",
-        }
-    except Exception as exc:
-        return {
-            "status": "error",
-            "source": "iwencai_news_search",
-            "data": {"query": query, "items": []},
-            "error": f"同花顺问财新闻搜索失败：{exc}",
-        }
-
-    status_code = raw.get("status_code", raw.get("code", 0))
-    if status_code not in (0, "0", None):
-        return {
-            "status": "error",
-            "source": "iwencai_news_search",
-            "data": {"query": query, "items": [], "raw_keys": sorted(raw.keys())},
-            "error": str(raw.get("status_msg") or raw.get("message") or raw.get("msg") or "新闻搜索接口返回错误。"),
-        }
-
-    items = _extract_news_items(raw)
-    return {
-        "status": "ok" if items else "empty",
-        "source": "iwencai_news_search",
-        "data": {
-            "query": query,
-            "items": items[:10],
-            "raw_keys": sorted(raw.keys()),
-        },
-        "error": "" if items else "新闻搜索没有返回可用条目。",
-    }
+    return fetch_company_news(arguments)
 
 
 def _execute_announcement_search(arguments: dict[str, Any]) -> dict[str, Any]:
-    """调用同花顺问财公告搜索；只用于财报和正式公告。"""
+    """Fetch announcements and filings through free read-only providers."""
 
-    query = str(arguments.get("query") or arguments.get("symbol") or arguments.get("stock_code") or "").strip()
-    if not query:
-        return {
-            "status": "error",
-            "source": "iwencai_announcement_search",
-            "data": {"query": "", "items": []},
-            "error": "缺少 query 参数。",
-        }
-
-    api_key = os.getenv("IWENCAI_API_KEY", "").strip()
-    if not api_key:
-        return {
-            "status": "not_configured",
-            "source": "iwencai_announcement_search",
-            "data": {"query": query, "items": []},
-            "error": "缺少 IWENCAI_API_KEY，未执行公告搜索。",
-        }
-
-    api_url = os.getenv("IWENCAI_API_URL", "https://openapi.iwencai.com/v1/comprehensive/search").strip()
-    payload = {
-        "channels": ["announcement"],
-        "app_id": "AIME_SKILL",
-        "query": query,
-    }
-    req = request.Request(
-        api_url,
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with request.urlopen(req, timeout=20) as response:
-            raw = json.loads(response.read().decode("utf-8"))
-    except error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        return {
-            "status": "error",
-            "source": "iwencai_announcement_search",
-            "data": {"query": query, "items": []},
-            "error": f"同花顺问财公告搜索 HTTP {exc.code}: {detail[:300]}",
-        }
-    except Exception as exc:
-        return {
-            "status": "error",
-            "source": "iwencai_announcement_search",
-            "data": {"query": query, "items": []},
-            "error": f"同花顺问财公告搜索失败：{exc}",
-        }
-
-    status_code = raw.get("status_code", raw.get("code", 0))
-    if status_code not in (0, "0", None):
-        return {
-            "status": "error",
-            "source": "iwencai_announcement_search",
-            "data": {"query": query, "items": [], "raw_keys": sorted(raw.keys())},
-            "error": str(raw.get("status_msg") or raw.get("message") or raw.get("msg") or "公告搜索接口返回错误。"),
-        }
-
-    items = _extract_announcement_items(raw)
-    return {
-        "status": "ok" if items else "empty",
-        "source": "iwencai_announcement_search",
-        "data": {
-            "query": query,
-            "items": items[:10],
-            "raw_keys": sorted(raw.keys()),
-        },
-        "error": "" if items else "公告搜索没有返回可用条目。",
-    }
+    return fetch_company_announcements(arguments)
 
 
 def _iter_framework_dirs(framework_id: str) -> list[Path]:
@@ -612,77 +469,6 @@ def _dossier_decision_matches(framework_dir: Path, symbol: str, *, limit: int) -
             }
         )
     return matches
-
-
-def _extract_news_items(raw: dict[str, Any]) -> list[dict[str, str]]:
-    rows = _find_first_list(raw, keys=("datas", "results", "items", "list", "news"))
-    items: list[dict[str, str]] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        item = {
-            "title": _first_text(row, "title", "新闻标题", "name", "标题"),
-            "summary": _first_text(row, "summary", "abstract", "content", "摘要", "内容"),
-            "source": _first_text(row, "source", "media", "origin", "来源", "媒体"),
-            "published_at": _first_text(row, "publish_time", "published_at", "date", "time", "发布时间"),
-            "url": _first_text(row, "url", "link", "href", "新闻链接"),
-        }
-        if any(item.values()):
-            items.append(item)
-    return items
-
-
-def _extract_announcement_items(raw: dict[str, Any]) -> list[dict[str, Any]]:
-    rows = _find_first_list(raw, keys=("datas", "results", "items", "list", "announcements"))
-    items: list[dict[str, Any]] = []
-    try:
-        from src.dividend_disclosure import parse_cash_dividend_per_share
-    except Exception:
-        parse_cash_dividend_per_share = None
-
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        title = _first_text(row, "title", "公告标题", "name", "标题")
-        summary = _first_text(row, "summary", "abstract", "content", "摘要", "内容")
-        text = f"{title} {summary}"
-        item = {
-            "title": title,
-            "summary": summary,
-            "source": _first_text(row, "source", "origin", "来源"),
-            "published_at": _first_text(row, "publish_time", "published_at", "date", "time", "发布时间"),
-            "url": _first_text(row, "url", "link", "href", "公告链接"),
-            "cash_dividend_per_share": (
-                parse_cash_dividend_per_share(text) if parse_cash_dividend_per_share else None
-            ),
-        }
-        if any(item.values()):
-            items.append(item)
-    return items
-
-
-def _find_first_list(value: Any, *, keys: tuple[str, ...]) -> list[Any]:
-    if isinstance(value, list):
-        return value
-    if not isinstance(value, dict):
-        return []
-    for key in keys:
-        candidate = value.get(key)
-        if isinstance(candidate, list):
-            return candidate
-    for child in value.values():
-        candidate = _find_first_list(child, keys=keys)
-        if candidate:
-            return candidate
-    return []
-
-
-def _first_text(row: dict[str, Any], *keys: str) -> str:
-    for key in keys:
-        value = row.get(key)
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    return ""
 
 
 def _safe_symbol_filename(symbol: str) -> str:

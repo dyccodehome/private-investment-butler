@@ -117,7 +117,7 @@ All executable Skill results are normalized before they are shown to workers or 
 ```json
 {
   "status": "ok | error | missing | empty | provider_not_configured | unauthorized",
-  "source": "local | yfinance | longbridge | iwencai_news_search | ...",
+  "source": "local | yfinance | longbridge | market_intel_news | market_intel_announcements | ...",
   "data_type": "portfolio_snapshot | market_data | news | announcement | research_dossier | trade_history",
   "data": {},
   "freshness": {
@@ -171,7 +171,6 @@ Common variables:
 | `FEISHU_APP_ID`, `FEISHU_APP_SECRET` | Feishu long-connection app credentials. |
 | `FEISHU_VERIFICATION_TOKEN`, `FEISHU_ENCRYPT_KEY` | Feishu event verification settings. |
 | `FEISHU_DEFAULT_CHAT_ID` | Default chat for scheduled pushes. |
-| `IWENCAI_API_KEY`, `IWENCAI_API_URL` | Optional news and announcement provider. |
 | `YUQUE_TOKEN`, `YUQUE_NAMESPACE`, `YUQUE_ARCHIVE_DIR` | Optional knowledge archive integration. |
 
 Run local checks:

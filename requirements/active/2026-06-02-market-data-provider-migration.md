@@ -6,12 +6,12 @@
 
 ## 背景
 
-当前项目里存在多组 `hithink-*` Skill，它们的说明和实现边界基于同花顺问财。用户希望后续金融数据来源统一为：
+当前项目里曾存在多组旧行情/财务 Skill，说明和实现边界依赖专有问句式数据源。用户希望后续金融数据来源统一为：
 
 - A 股金融数据：Yahoo Finance / yfinance
 - 美股金融数据：Longbridge
 
-这样可以减少同花顺 API 依赖，并让数据获取逻辑由固定 Python Provider 控制，而不是让 LLM 自由调用外部工具。
+这样可以减少专有 API 依赖，并让数据获取逻辑由固定 Python Provider 控制，而不是让 LLM 自由调用外部工具。
 
 ## 目标
 
@@ -19,7 +19,7 @@
 - A 股行情、历史 K 线、分红、基础财务数据优先通过 yfinance 获取。
 - 美股行情、持仓、报价、基础数据优先通过 Longbridge 获取。
 - Skill 层只做语义入口和兼容别名，不直接写数据抓取逻辑。
-- 旧 `hithink-market-query`、`hithink-finance-query`、`hithink-basicinfo-query` 逐步迁移到新 Provider。
+- 旧行情、财务和基础信息入口逐步迁移到新 Provider。
 - 所有 Provider 返回统一结构：`status`、`source`、`market`、`symbol`、`data`、`error`、`source_chain`、`data_quality`。
 
 ## 非目标
@@ -83,10 +83,10 @@ src/market_data/
 - [x] Provider 返回数据质量摘要。
 - [x] Cash Anchor 分析前能自动拿到 A 股最新价。
 - [x] Growth Engine 复盘能按市场选择数据源。
-- [x] 旧 `hithink-*` 行情、财务、基础信息 Skill 接入统一 Provider 兼容入口。
+- [x] `market-data` Skill 接入统一 Provider。
 - [x] 数据源失败时，Provider 返回明确缺口。
 - [x] 单元测试覆盖 symbol mapping、provider routing 和失败路径。
-- [x] 新闻和公告 Skill 已接入标准 payload；缺少凭据时返回 `provider_not_configured`。
+- [x] 新闻和公告 Skill 已接入免费只读情报 Provider；缺少本地依赖或外部源不可用时返回结构化缺口。
 
 ## 待确认问题
 
@@ -97,7 +97,8 @@ src/market_data/
 ## 实现记录
 
 - 2026-06-02：需求已确认，待实现。
-- 2026-06-03：新增 `src/market_data/`，包括统一返回结构、A 股 Yahoo Finance 映射、yfinance Provider、Longbridge quote Provider 和 Provider router。旧 `hithink-market-query`、`hithink-finance-query`、`hithink-basicinfo-query` 已接到统一 Provider。
+- 2026-06-03：新增 `src/market_data/`，包括统一返回结构、A 股 Yahoo Finance 映射、yfinance Provider、Longbridge quote Provider 和 Provider router。旧行情、财务和基础信息入口已收敛到统一 Provider。
+- 2026-06-05：行情 Skill 正式改名为 `market-data`；新闻/公告移除专有问句接口，改用 AkShare、YFinance 和 SEC 官方 filings 等免费只读来源。
 - 2026-06-03：Growth_Engine 单股复盘和每日复盘在调用 LLM 前会补充 `market_data`，A 股走 yfinance，美股走 Longbridge；失败结果保留在上下文中供 LLM 明确说明缺口。
 - 2026-06-03：`portfolio_snapshot` Skill 改为返回 Cash Anchor 增强快照，包含本地账本和只读市场数据，不自动写回 `holdings.csv`。
 - 2026-06-04：新增美股行情 fallback、市场阶段上下文、数据质量摘要、新闻/公告标准 payload、输出契约和决策复盘统计。当前进入真实 Provider 和生产链路复核阶段。

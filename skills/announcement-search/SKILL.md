@@ -24,7 +24,7 @@ description: 获取 A 股和美股标的的财报、分红、回购、减持、�
 
 旧全维度分析 prompt 已收敛为当前系统可执行的顺序：
 
-1. `hithink-market-query` 获取价格和市场阶段。
+1. `market-data` 获取价格和市场阶段。
 2. `announcement-search` 核验财报、分红和重大事项。
 3. `news-search` 补充近期事件线索。
 4. `research_dossier` 对比历史买入理由、风险点和退出条件。
