@@ -470,6 +470,7 @@ def _compact_portfolio_snapshot(data: dict[str, Any]) -> dict[str, Any]:
         },
         "positions": [_compact_position(item) for item in _as_list(data.get("positions"))[:20]],
         "market_breakdown": data.get("market_breakdown") if isinstance(data.get("market_breakdown"), dict) else {},
+        "position_limit_analysis": _compact_position_limit_analysis(data.get("position_limit_analysis")),
         "currency_breakdown": _pick(
             data.get("currency_breakdown"),
             "is_mixed_currency",
@@ -490,12 +491,68 @@ def _compact_position(position: dict[str, Any]) -> dict[str, Any]:
         "market": position.get("market"),
         "currency": position.get("currency"),
         "shares": position.get("shares"),
+        "market_value": position.get("market_value"),
         "annual_dividend_per_share": position.get("annual_dividend_per_share"),
         "gross_annual_dividend": position.get("gross_annual_dividend"),
         "net_annual_dividend": position.get("net_annual_dividend"),
         "yield_on_cost": position.get("yield_on_cost"),
         "net_yield_on_cost": position.get("net_yield_on_cost"),
         "notes": _compact_text(str(position.get("notes") or ""), 160),
+    }
+
+
+def _compact_position_limit_analysis(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "status": value.get("status"),
+        "scope": value.get("scope"),
+        "denominator_market_value": value.get("denominator_market_value"),
+        "policy": value.get("policy"),
+        "positions": [
+            _pick(
+                item,
+                "symbol",
+                "name",
+                "market_value",
+                "weight",
+                "limit_type",
+                "limit_type_label",
+                "limit_pct",
+                "status",
+                "can_add",
+                "remaining_market_value_to_limit",
+                "industry",
+                "industry_label",
+            )
+            for item in _as_list(value.get("positions"))[:20]
+        ],
+        "industries": [
+            _pick(
+                item,
+                "industry",
+                "industry_label",
+                "symbols",
+                "market_value",
+                "weight",
+                "limit_pct",
+                "status",
+                "can_add",
+                "remaining_market_value_to_limit",
+            )
+            for item in _as_list(value.get("industries"))[:12]
+        ],
+        "cyclical_total": _pick(
+            value.get("cyclical_total"),
+            "industries",
+            "market_value",
+            "weight",
+            "limit_pct",
+            "status",
+            "can_add",
+            "remaining_market_value_to_limit",
+        ),
+        "warnings": _compact_text_list(value.get("warnings"), limit=6, chars=180),
     }
 
 

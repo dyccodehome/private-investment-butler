@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import csv
 from collections import defaultdict
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -25,6 +25,58 @@ PORTFOLIO_EVENTS_PATH = DATA_DIR / "portfolio_events.csv"
 DIVIDEND_PLAN_PATH = DATA_DIR / "dividend_plan.yaml"
 US_DISTRIBUTION_HISTORY_PATH = DATA_DIR / "us_distribution_history.csv"
 US_INCOME_SYMBOLS = {"QQQI", "QQQI.US", "XQQI", "XQQI.US", "TQQQ", "TQQQ.US"}
+DEFAULT_INDUSTRY_LIMIT_PCT = {
+    "bank": 0.30,
+    "insurance": 0.15,
+    "resource": 0.20,
+    "utility": 0.30,
+    "telecom": 0.20,
+    "transport": 0.15,
+    "consumer": 0.20,
+}
+DEFAULT_CYCLICAL_INDUSTRIES = ["resource", "coal", "shipping", "nonferrous"]
+DEFAULT_SYMBOL_LIMIT_TYPES = {
+    "000333": "normal",
+    "600036": "core",
+    "600132": "normal",
+    "600795": "normal",
+    "600887": "normal",
+    "600900": "core",
+    "600941": "core",
+    "601166": "normal",
+    "601318": "normal",
+    "601985": "normal",
+}
+DEFAULT_SYMBOL_INDUSTRIES = {
+    "000333": "consumer",
+    "600036": "bank",
+    "600132": "consumer",
+    "600795": "utility",
+    "600887": "consumer",
+    "600900": "utility",
+    "600941": "telecom",
+    "601166": "bank",
+    "601318": "insurance",
+    "601985": "utility",
+}
+LIMIT_TYPE_LABELS = {
+    "core": "超高确定性核心红利",
+    "normal": "普通红利龙头",
+    "cyclical": "强周期红利资产",
+}
+INDUSTRY_LABELS = {
+    "bank": "银行",
+    "insurance": "保险",
+    "resource": "煤炭/资源",
+    "coal": "煤炭",
+    "shipping": "航运",
+    "nonferrous": "有色",
+    "utility": "电力/公用事业",
+    "telecom": "运营商",
+    "transport": "交运",
+    "consumer": "消费红利",
+    "unknown": "未分类",
+}
 
 
 @dataclass(frozen=True)
@@ -92,6 +144,15 @@ class DividendPlan:
     retirement_years: int = 10
     annual_contribution_target: float = 0.0
     currency: str = "CNY"
+    single_position_limit_pct: float = 0.10
+    core_position_limit_pct: float = 0.15
+    cyclical_position_limit_pct: float = 0.08
+    cyclical_total_limit_pct: float = 0.25
+    industry_limit_default_pct: float = 0.30
+    industry_limit_pct: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_INDUSTRY_LIMIT_PCT))
+    cyclical_industries: list[str] = field(default_factory=lambda: list(DEFAULT_CYCLICAL_INDUSTRIES))
+    symbol_limit_types: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_SYMBOL_LIMIT_TYPES))
+    symbol_industries: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_SYMBOL_INDUSTRIES))
 
 
 def build_portfolio_snapshot(as_of: date | None = None) -> dict[str, Any]:
@@ -113,6 +174,7 @@ def build_portfolio_snapshot(as_of: date | None = None) -> dict[str, Any]:
     )
     dividend_analysis = _build_dividend_analysis(holdings, positions, events, current_date, plan.currency)
     currency_breakdown = _build_currency_breakdown(positions, flows, events, current_date)
+    position_limit_analysis = _build_position_limit_analysis(positions, plan)
 
     return {
         "as_of": current_date.isoformat(),
@@ -158,7 +220,11 @@ def build_portfolio_snapshot(as_of: date | None = None) -> dict[str, Any]:
         "dividend_analysis": dividend_analysis,
         "market_breakdown": _build_market_breakdown(positions),
         "currency_breakdown": currency_breakdown,
-        "data_quality": _build_data_quality(holdings, events, current_date),
+        "position_limit_analysis": position_limit_analysis,
+        "data_quality": _data_quality_with_position_limits(
+            _build_data_quality(holdings, events, current_date),
+            position_limit_analysis,
+        ),
         "positions": positions,
         "capital_flows": [asdict(item) for item in flows],
         "portfolio_events": [asdict(item) for item in events],
@@ -192,6 +258,8 @@ def build_enriched_portfolio_snapshot(as_of: date | None = None) -> dict[str, An
         list(enriched.get("positions") or []),
         market_data,
     )
+    position_limit_analysis = _build_position_limit_analysis(valuation_positions, read_dividend_plan())
+    enriched["position_limit_analysis"] = position_limit_analysis
     if enriched["exchange_rates"].get("status") == "ok":
         dividend_analysis = dict(enriched.get("dividend_analysis") or {})
         dividend_analysis["portfolio_dividend_yield_estimate"] = _build_portfolio_dividend_yield_estimate(
@@ -219,7 +287,7 @@ def build_enriched_portfolio_snapshot(as_of: date | None = None) -> dict[str, An
         "write_policy": "分析期间只读，不自动覆盖持仓账本。",
     }
     enriched["data_quality"] = {
-        **dict(snapshot.get("data_quality") or {}),
+        **_data_quality_with_position_limits(dict(snapshot.get("data_quality") or {}), position_limit_analysis),
         "market_data": enriched["market_data_summary"],
     }
     return enriched
@@ -296,24 +364,21 @@ def update_dividend_plan(
             else current.annual_contribution_target
         ),
         currency=currency or current.currency,
+        single_position_limit_pct=current.single_position_limit_pct,
+        core_position_limit_pct=current.core_position_limit_pct,
+        cyclical_position_limit_pct=current.cyclical_position_limit_pct,
+        cyclical_total_limit_pct=current.cyclical_total_limit_pct,
+        industry_limit_default_pct=current.industry_limit_default_pct,
+        industry_limit_pct=dict(current.industry_limit_pct),
+        cyclical_industries=list(current.cyclical_industries),
+        symbol_limit_types=dict(current.symbol_limit_types),
+        symbol_industries=dict(current.symbol_industries),
     )
     if updated.annual_contribution_target < 0:
         raise ValueError("年度投入目标不能为负数。")
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    DIVIDEND_PLAN_PATH.write_text(
-        "\n".join(
-            [
-                f"plan_name: {updated.plan_name}",
-                f"base_year: {updated.base_year}",
-                f"retirement_years: {updated.retirement_years}",
-                f"annual_contribution_target: {_format_amount(updated.annual_contribution_target)}",
-                f"currency: {updated.currency}",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    _write_dividend_plan(updated)
     snapshot = build_portfolio_snapshot(as_of=as_of)
     snapshot["dividend_plan_path"] = str(DIVIDEND_PLAN_PATH)
     return snapshot
@@ -674,6 +739,7 @@ def format_snapshot(snapshot: dict[str, Any]) -> str:
     plan = snapshot["plan"]
     currency = plan["currency"]
     yield_lines = _format_dividend_yield_estimate_lines(snapshot)
+    limit_line = _format_position_limit_line(snapshot)
     return (
         "Cash Anchor 持仓快照：\n"
         f"- 持仓数量：{summary['holding_count']}\n"
@@ -682,6 +748,7 @@ def format_snapshot(snapshot: dict[str, Any]) -> str:
         f"- 预估税后年分红：{_money(summary['net_annual_dividend'], currency)}\n"
         f"- 成本税后股息率：{float(summary['net_yield_on_cost'] or 0):.2%}\n"
         f"{yield_lines}"
+        f"{limit_line}"
         f"- 当前年投入：{_money(summary['current_year_contribution'], currency)}\n"
         f"- 投入目标进度：{float(summary['annual_contribution_progress'] or 0):.1%}\n"
         f"- 持仓账本：{snapshot['data_files']['holdings']}\n"
@@ -711,6 +778,20 @@ def _format_dividend_yield_estimate_lines(snapshot: dict[str, Any]) -> str:
     elif total.get("status") == "requires_fx":
         lines.append("- 全组合综合股息率：需先确认汇率，当前按币种分开展示。")
     return "\n".join(lines) + "\n"
+
+
+def _format_position_limit_line(snapshot: dict[str, Any]) -> str:
+    analysis = snapshot.get("position_limit_analysis") if isinstance(snapshot.get("position_limit_analysis"), dict) else {}
+    if not analysis:
+        return ""
+    status = str(analysis.get("status") or "unknown")
+    label = {
+        "ok": "正常",
+        "near_limit": "接近上限",
+        "over_limit": "已超限",
+        "missing": "不可用",
+    }.get(status, status)
+    return f"- 仓位纪律：{label}（{analysis.get('scope') or 'A股红利池'}）\n"
 
 
 def _write_holdings(holdings: list[Holding]) -> None:
@@ -872,13 +953,51 @@ def read_dividend_plan() -> DividendPlan:
     if not DIVIDEND_PLAN_PATH.exists():
         return DividendPlan()
     data = _read_simple_key_value_yaml(DIVIDEND_PLAN_PATH)
+    default = DividendPlan()
     return DividendPlan(
         plan_name=str(data.get("plan_name") or "Cash Anchor 10 Year Retirement Plan"),
         base_year=int(_to_float(data.get("base_year")) or 2026),
         retirement_years=int(_to_float(data.get("retirement_years")) or 10),
         annual_contribution_target=_to_float(data.get("annual_contribution_target")),
         currency=str(data.get("currency") or "CNY"),
+        single_position_limit_pct=_plan_float(data, "limit_single_normal_pct", default.single_position_limit_pct),
+        core_position_limit_pct=_plan_float(data, "limit_single_core_pct", default.core_position_limit_pct),
+        cyclical_position_limit_pct=_plan_float(data, "limit_single_cyclical_pct", default.cyclical_position_limit_pct),
+        cyclical_total_limit_pct=_plan_float(data, "limit_cyclical_total_pct", default.cyclical_total_limit_pct),
+        industry_limit_default_pct=_plan_float(data, "limit_industry_default_pct", default.industry_limit_default_pct),
+        industry_limit_pct=_read_industry_limits(data, default.industry_limit_pct),
+        cyclical_industries=_read_csv_text_list(data.get("limit_cyclical_industries"), default.cyclical_industries),
+        symbol_limit_types=_read_symbol_text_map(data.get("limit_symbol_types"), default.symbol_limit_types),
+        symbol_industries=_read_symbol_text_map(data.get("limit_symbol_industries"), default.symbol_industries),
     )
+
+
+def _write_dividend_plan(plan: DividendPlan) -> None:
+    lines = [
+        f"plan_name: {plan.plan_name}",
+        f"base_year: {plan.base_year}",
+        f"retirement_years: {plan.retirement_years}",
+        f"annual_contribution_target: {_format_amount(plan.annual_contribution_target)}",
+        f"currency: {plan.currency}",
+        "",
+        "# Position limit rules use A-share dividend-pool market value as denominator.",
+        f"limit_single_core_pct: {_format_decimal(plan.core_position_limit_pct, 4)}",
+        f"limit_single_normal_pct: {_format_decimal(plan.single_position_limit_pct, 4)}",
+        f"limit_single_cyclical_pct: {_format_decimal(plan.cyclical_position_limit_pct, 4)}",
+        f"limit_cyclical_total_pct: {_format_decimal(plan.cyclical_total_limit_pct, 4)}",
+        f"limit_industry_default_pct: {_format_decimal(plan.industry_limit_default_pct, 4)}",
+    ]
+    for industry, limit in sorted(plan.industry_limit_pct.items()):
+        lines.append(f"limit_industry_{industry}_pct: {_format_decimal(limit, 4)}")
+    lines.extend(
+        [
+            f"limit_cyclical_industries: {_format_text_list(plan.cyclical_industries)}",
+            f"limit_symbol_types: {_format_text_map(plan.symbol_limit_types)}",
+            f"limit_symbol_industries: {_format_text_map(plan.symbol_industries)}",
+            "",
+        ]
+    )
+    DIVIDEND_PLAN_PATH.write_text("\n".join(lines), encoding="utf-8")
 
 
 def _ensure_cash_anchor_data_files() -> None:
@@ -898,6 +1017,11 @@ def _ensure_cash_anchor_data_files() -> None:
                         "retirement_years: 10",
                         "annual_contribution_target: 50000",
                         "currency: CNY",
+                        "limit_single_core_pct: 0.15",
+                        "limit_single_normal_pct: 0.10",
+                        "limit_single_cyclical_pct: 0.08",
+                        "limit_cyclical_total_pct: 0.25",
+                        "limit_industry_default_pct: 0.30",
                         "",
                     ]
                 ),
@@ -1393,6 +1517,139 @@ def _build_market_breakdown(positions: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _build_position_limit_analysis(positions: list[dict[str, Any]], plan: DividendPlan) -> dict[str, Any]:
+    cn_positions = [
+        dict(item)
+        for item in positions
+        if _market_group(str(item.get("market") or ""), str(item.get("symbol") or "")) == "A股"
+        and _to_float(item.get("market_value")) > 0
+    ]
+    denominator = sum(_to_float(item.get("market_value")) for item in cn_positions)
+    if denominator <= 0:
+        return {
+            "status": "missing",
+            "scope": "A股红利池",
+            "denominator_market_value": 0.0,
+            "policy": "没有可用 A 股市值，无法计算单票和行业仓位上限。",
+            "positions": [],
+            "industries": [],
+            "cyclical_total": {},
+            "warnings": ["A 股红利池市值为 0，仓位上限分析不可用。"],
+        }
+
+    position_rows: list[dict[str, Any]] = []
+    industry_totals: dict[str, dict[str, Any]] = {}
+    warnings: list[str] = []
+    for position in cn_positions:
+        symbol = str(position.get("symbol") or "")
+        canonical = _canonical_symbol(symbol)
+        market_value = _to_float(position.get("market_value"))
+        weight = _safe_ratio(market_value, denominator)
+        industry = _symbol_industry(canonical, position, plan)
+        limit_type = _symbol_limit_type(canonical, plan, industry)
+        limit_pct = _single_position_limit(limit_type, plan)
+        row = {
+            "symbol": symbol,
+            "name": position.get("name") or "",
+            "market_value": round(market_value, 2),
+            "weight": weight,
+            "limit_type": limit_type,
+            "limit_type_label": LIMIT_TYPE_LABELS.get(limit_type, limit_type),
+            "limit_pct": limit_pct,
+            "status": _limit_status(weight, limit_pct),
+            "can_add": weight < limit_pct,
+            "remaining_market_value_to_limit": round(max(limit_pct - weight, 0) * denominator, 2),
+            "industry": industry,
+            "industry_label": INDUSTRY_LABELS.get(industry, industry),
+        }
+        position_rows.append(row)
+        industry_row = industry_totals.setdefault(
+            industry,
+            {
+                "industry": industry,
+                "industry_label": INDUSTRY_LABELS.get(industry, industry),
+                "symbols": [],
+                "market_value": 0.0,
+            },
+        )
+        industry_row["symbols"].append(symbol)
+        industry_row["market_value"] += market_value
+        if industry == "unknown":
+            warnings.append(f"{symbol} 缺少行业分类，已按默认行业上限处理。")
+
+    industry_rows: list[dict[str, Any]] = []
+    for industry, raw in industry_totals.items():
+        market_value = _to_float(raw.get("market_value"))
+        weight = _safe_ratio(market_value, denominator)
+        limit_pct = plan.industry_limit_pct.get(industry, plan.industry_limit_default_pct)
+        industry_rows.append(
+            {
+                "industry": industry,
+                "industry_label": raw.get("industry_label") or industry,
+                "symbols": raw.get("symbols") or [],
+                "market_value": round(market_value, 2),
+                "weight": weight,
+                "limit_pct": limit_pct,
+                "status": _limit_status(weight, limit_pct),
+                "can_add": weight < limit_pct,
+                "remaining_market_value_to_limit": round(max(limit_pct - weight, 0) * denominator, 2),
+            }
+        )
+
+    cyclical_industries = set(plan.cyclical_industries)
+    cyclical_value = sum(
+        _to_float(item.get("market_value"))
+        for item in industry_rows
+        if str(item.get("industry") or "") in cyclical_industries
+    )
+    cyclical_weight = _safe_ratio(cyclical_value, denominator)
+    cyclical_total = {
+        "industries": sorted(cyclical_industries),
+        "market_value": round(cyclical_value, 2),
+        "weight": cyclical_weight,
+        "limit_pct": plan.cyclical_total_limit_pct,
+        "status": _limit_status(cyclical_weight, plan.cyclical_total_limit_pct),
+        "can_add": cyclical_weight < plan.cyclical_total_limit_pct,
+        "remaining_market_value_to_limit": round(
+            max(plan.cyclical_total_limit_pct - cyclical_weight, 0) * denominator,
+            2,
+        ),
+    }
+
+    position_rows.sort(key=lambda item: float(item["weight"]), reverse=True)
+    industry_rows.sort(key=lambda item: float(item["weight"]), reverse=True)
+    statuses = [str(item.get("status")) for item in position_rows + industry_rows + [cyclical_total]]
+    return {
+        "status": "over_limit" if "over_limit" in statuses else "near_limit" if "near_limit" in statuses else "ok",
+        "scope": "A股红利池",
+        "denominator_market_value": round(denominator, 2),
+        "policy": "单票、行业和强周期上限均按 A 股红利池市值口径计算；美元收益持仓不参与该约束。",
+        "limit_source": str(DIVIDEND_PLAN_PATH),
+        "positions": position_rows,
+        "industries": industry_rows,
+        "cyclical_total": cyclical_total,
+        "warnings": _dedupe_text(warnings),
+    }
+
+
+def _data_quality_with_position_limits(
+    quality: dict[str, Any],
+    position_limit_analysis: dict[str, Any],
+) -> dict[str, Any]:
+    result = dict(quality)
+    warnings = list(result.get("warnings") or [])
+    status = str(position_limit_analysis.get("status") or "")
+    if status == "over_limit":
+        warnings.append("仓位纪律发现超限：单票、行业或强周期仓位已经超过结构化上限。")
+    elif status == "near_limit":
+        warnings.append("仓位纪律接近上限：新增买入前必须先核对 position_limit_analysis。")
+    warnings.extend(str(item) for item in position_limit_analysis.get("warnings") or [])
+    result["position_limit_status"] = status or "unknown"
+    result["warnings"] = _dedupe_text(warnings)
+    result["status"] = "has_gaps" if result["warnings"] else "ok"
+    return result
+
+
 def _build_currency_breakdown(
     positions: list[dict[str, Any]],
     flows: list[CapitalFlow],
@@ -1589,6 +1846,53 @@ def _holding_identity(holding: Holding) -> dict[str, Any]:
     }
 
 
+def _symbol_limit_type(canonical_symbol: str, plan: DividendPlan, industry: str = "") -> str:
+    value = str(plan.symbol_limit_types.get(canonical_symbol) or "").strip().lower()
+    if value in LIMIT_TYPE_LABELS:
+        return value
+    if industry and industry in set(plan.cyclical_industries):
+        return "cyclical"
+    return "normal"
+
+
+def _symbol_industry(canonical_symbol: str, position: dict[str, Any], plan: DividendPlan) -> str:
+    configured = str(plan.symbol_industries.get(canonical_symbol) or "").strip().lower()
+    if configured:
+        return configured
+    name = str(position.get("name") or "")
+    if "银行" in name:
+        return "bank"
+    if "保险" in name or "平安" in name:
+        return "insurance"
+    if any(term in name for term in ("煤", "资源", "有色")):
+        return "resource"
+    if any(term in name for term in ("电力", "核电", "水电", "能源")):
+        return "utility"
+    if any(term in name for term in ("移动", "电信", "联通")):
+        return "telecom"
+    if any(term in name for term in ("啤酒", "美的", "伊利", "消费")):
+        return "consumer"
+    return "unknown"
+
+
+def _single_position_limit(limit_type: str, plan: DividendPlan) -> float:
+    if limit_type == "core":
+        return plan.core_position_limit_pct
+    if limit_type == "cyclical":
+        return plan.cyclical_position_limit_pct
+    return plan.single_position_limit_pct
+
+
+def _limit_status(weight: float, limit_pct: float) -> str:
+    if limit_pct <= 0:
+        return "unknown"
+    if weight > limit_pct + 1e-9:
+        return "over_limit"
+    if weight >= limit_pct * 0.9:
+        return "near_limit"
+    return "ok"
+
+
 def _duplicate_symbol_groups(holdings: list[Holding]) -> list[dict[str, Any]]:
     groups: defaultdict[str, list[Holding]] = defaultdict(list)
     for holding in holdings:
@@ -1729,6 +2033,76 @@ def _read_simple_key_value_yaml(path: Path) -> dict[str, str]:
             continue
         key, value = line.split(":", 1)
         result[key.strip()] = value.strip().strip('"').strip("'")
+    return result
+
+
+def _plan_float(data: dict[str, str], key: str, default: float) -> float:
+    value = _to_float(data.get(key))
+    return value if value > 0 else default
+
+
+def _read_industry_limits(data: dict[str, str], default: dict[str, float]) -> dict[str, float]:
+    result = dict(default)
+    prefix = "limit_industry_"
+    suffix = "_pct"
+    for key, value in data.items():
+        if not key.startswith(prefix) or not key.endswith(suffix):
+            continue
+        industry = key[len(prefix) : -len(suffix)].strip().lower()
+        if not industry or industry == "default":
+            continue
+        limit = _to_float(value)
+        if limit > 0:
+            result[industry] = limit
+    return result
+
+
+def _read_csv_text_list(value: Any, default: list[str]) -> list[str]:
+    text = str(value or "").strip()
+    if not text:
+        return list(default)
+    items = [
+        item.strip().lower()
+        for item in text.replace(";", ",").split(",")
+        if item.strip()
+    ]
+    return items or list(default)
+
+
+def _read_symbol_text_map(value: Any, default: dict[str, str]) -> dict[str, str]:
+    result = dict(default)
+    text = str(value or "").strip()
+    if not text:
+        return result
+    for part in text.replace(";", ",").split(","):
+        if "=" not in part:
+            continue
+        key, raw_value = part.split("=", 1)
+        symbol = _canonical_symbol(key.strip())
+        mapped = raw_value.strip().lower()
+        if symbol and mapped:
+            result[symbol] = mapped
+    return result
+
+
+def _format_text_list(items: list[str]) -> str:
+    return ",".join(str(item).strip() for item in items if str(item).strip())
+
+
+def _format_text_map(items: dict[str, str]) -> str:
+    return ",".join(
+        f"{key}={value}"
+        for key, value in sorted(items.items())
+        if str(key).strip() and str(value).strip()
+    )
+
+
+def _dedupe_text(items: list[str]) -> list[str]:
+    result: list[str] = []
+    for item in items:
+        text = str(item).strip()
+        if text and text not in result:
+            result.append(text)
     return result
 
 

@@ -45,6 +45,8 @@ class PortfolioLedgerTest(unittest.TestCase):
                 self.assertEqual(snapshot["summary"]["annual_contribution_gap"], 55000)
                 self.assertAlmostEqual(snapshot["summary"]["annual_contribution_progress"], 0.083333)
                 self.assertNotIn("target_annual_dividend", snapshot["plan"])
+                self.assertEqual(snapshot["plan"]["core_position_limit_pct"], 0.15)
+                self.assertEqual(snapshot["plan"]["industry_limit_pct"]["utility"], 0.30)
 
     def test_negative_targets_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -210,6 +212,69 @@ class PortfolioLedgerTest(unittest.TestCase):
         duplicates = snapshot["data_quality"]["duplicate_symbol_groups"]
         self.assertEqual(duplicates[0]["canonical_symbol"], "600132")
         self.assertIn("不能把成本", "\n".join(snapshot["data_quality"]["warnings"]))
+
+    def test_snapshot_builds_position_limit_analysis(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _ledger_paths(Path(tmp))
+            with _patch_ledger_paths(paths):
+                portfolio_ledger.upsert_holding(
+                    symbol="600900",
+                    name="长江电力",
+                    market="A股",
+                    currency="CNY",
+                    shares=1000,
+                    cost_price=15,
+                    current_price=15,
+                    annual_dividend_per_share=1,
+                    tax_rate=0,
+                    as_of=date(2026, 5, 24),
+                )
+                snapshot = portfolio_ledger.upsert_holding(
+                    symbol="600036",
+                    name="招商银行",
+                    market="A股",
+                    currency="CNY",
+                    shares=1000,
+                    cost_price=5,
+                    current_price=5,
+                    annual_dividend_per_share=1,
+                    tax_rate=0,
+                    as_of=date(2026, 5, 24),
+                )
+
+        analysis = snapshot["position_limit_analysis"]
+        self.assertEqual(analysis["status"], "over_limit")
+        position = {item["symbol"]: item for item in analysis["positions"]}["600900"]
+        self.assertEqual(position["limit_type"], "core")
+        self.assertAlmostEqual(position["weight"], 0.75)
+        self.assertEqual(position["limit_pct"], 0.15)
+        self.assertFalse(position["can_add"])
+        industry = {item["industry"]: item for item in analysis["industries"]}["utility"]
+        self.assertEqual(industry["status"], "over_limit")
+        self.assertIn("仓位纪律发现超限", "\n".join(snapshot["data_quality"]["warnings"]))
+        self.assertIn("仓位纪律：已超限", portfolio_ledger.format_snapshot(snapshot))
+
+    def test_resource_industry_defaults_to_cyclical_single_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _ledger_paths(Path(tmp))
+            with _patch_ledger_paths(paths):
+                snapshot = portfolio_ledger.upsert_holding(
+                    symbol="601088",
+                    name="中国神华煤炭",
+                    market="A股",
+                    currency="CNY",
+                    shares=1000,
+                    cost_price=20,
+                    current_price=20,
+                    annual_dividend_per_share=1,
+                    tax_rate=0,
+                    as_of=date(2026, 5, 24),
+                )
+
+        position = snapshot["position_limit_analysis"]["positions"][0]
+        self.assertEqual(position["industry"], "resource")
+        self.assertEqual(position["limit_type"], "cyclical")
+        self.assertEqual(position["limit_pct"], 0.08)
 
     def test_snapshot_builds_us_income_distribution_forecast(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -415,6 +480,21 @@ def _ledger_paths(root: Path) -> dict[str, Path]:
                 "retirement_years: 10",
                 "annual_contribution_target: 50000",
                 "currency: CNY",
+                "limit_single_core_pct: 0.15",
+                "limit_single_normal_pct: 0.10",
+                "limit_single_cyclical_pct: 0.08",
+                "limit_cyclical_total_pct: 0.25",
+                "limit_industry_default_pct: 0.30",
+                "limit_industry_bank_pct: 0.30",
+                "limit_industry_insurance_pct: 0.15",
+                "limit_industry_resource_pct: 0.20",
+                "limit_industry_utility_pct: 0.30",
+                "limit_industry_telecom_pct: 0.20",
+                "limit_industry_transport_pct: 0.15",
+                "limit_industry_consumer_pct: 0.20",
+                "limit_cyclical_industries: resource,coal,shipping,nonferrous",
+                "limit_symbol_types: 000333=normal,600036=core,600132=normal,600795=normal,600887=normal,600900=core,600941=core,601166=normal,601318=normal,601985=normal",
+                "limit_symbol_industries: 000333=consumer,600036=bank,600132=consumer,600795=utility,600887=consumer,600900=utility,600941=telecom,601166=bank,601318=insurance,601985=utility",
                 "",
             ]
         ),

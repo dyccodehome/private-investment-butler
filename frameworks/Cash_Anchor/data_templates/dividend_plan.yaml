@@ -3,3 +3,20 @@ base_year: 2026
 retirement_years: 10
 annual_contribution_target: 50000
 currency: CNY
+
+# Position limit rules use A-share dividend-pool market value as denominator.
+limit_single_core_pct: 0.15
+limit_single_normal_pct: 0.10
+limit_single_cyclical_pct: 0.08
+limit_cyclical_total_pct: 0.25
+limit_industry_default_pct: 0.30
+limit_industry_bank_pct: 0.30
+limit_industry_insurance_pct: 0.15
+limit_industry_resource_pct: 0.20
+limit_industry_utility_pct: 0.30
+limit_industry_telecom_pct: 0.20
+limit_industry_transport_pct: 0.15
+limit_industry_consumer_pct: 0.20
+limit_cyclical_industries: resource,coal,shipping,nonferrous
+limit_symbol_types: 000333=normal,600036=core,600132=normal,600795=normal,600887=normal,600900=core,600941=core,601166=normal,601318=normal,601985=normal
+limit_symbol_industries: 000333=consumer,600036=bank,600132=consumer,600795=utility,600887=consumer,600900=utility,600941=telecom,601166=bank,601318=insurance,601985=utility
