@@ -43,6 +43,13 @@ class PromptsTest(unittest.TestCase):
         self.assertIn("不要套用", text)
         self.assertIn("不要输出 Markdown 表格", text)
 
+    def test_worker_system_prompt_requires_position_guardrail_for_adds(self) -> None:
+        text = prompts.worker_system_prompt()
+
+        self.assertIn("position_limit_analysis", text)
+        self.assertIn("strict_max_add_market_value", text)
+        self.assertIn("买入后 A 股红利池市值分母", text)
+
     def test_auditor_persona_selects_dynamic_section(self) -> None:
         risk = prompts.auditor_system_prompt("risk", risk_persona="risk", purist_persona="purist")
         purist = prompts.auditor_system_prompt("purist", risk_persona="risk", purist_persona="purist")

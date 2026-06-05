@@ -66,6 +66,34 @@ class SubAgentContextTest(unittest.TestCase):
                                     "notes": "current_price=pending_quote",
                                 }
                             ],
+                            "position_limit_analysis": {
+                                "status": "over_limit",
+                                "scope": "A股红利池",
+                                "positions": [
+                                    {
+                                        "symbol": "600900",
+                                        "name": "长江电力",
+                                        "market_value": 90000,
+                                        "weight": 0.2,
+                                        "limit_pct": 0.15,
+                                        "can_add": False,
+                                        "strict_max_add_market_value": 0,
+                                        "add_guardrail": {
+                                            "status": "over_limit",
+                                            "can_add": False,
+                                            "strict_max_add_market_value": 0,
+                                            "binding_constraints": [
+                                                {
+                                                    "constraint_id": "single_position",
+                                                    "label": "单票上限",
+                                                    "status": "over_limit",
+                                                    "max_add_market_value": 0,
+                                                }
+                                            ],
+                                        },
+                                    }
+                                ],
+                            },
                             "market_data": {"600900": "raw market data should be omitted" * 200},
                             "data_quality": {"status": "has_gaps"},
                         },
@@ -83,6 +111,10 @@ class SubAgentContextTest(unittest.TestCase):
         facts = parsed["disclosures"][0]["result"]["facts"]
         self.assertEqual(facts["summary"]["net_annual_dividend"], 1234.56)
         self.assertEqual(facts["positions"][0]["symbol"], "600900")
+        self.assertEqual(
+            facts["position_limit_analysis"]["positions"][0]["add_guardrail"]["status"],
+            "over_limit",
+        )
         self.assertNotIn("raw market data should be omitted", compact)
         self.assertNotIn("full dividend event that should be omitted", compact)
 

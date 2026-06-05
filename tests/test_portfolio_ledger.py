@@ -249,10 +249,47 @@ class PortfolioLedgerTest(unittest.TestCase):
         self.assertAlmostEqual(position["weight"], 0.75)
         self.assertEqual(position["limit_pct"], 0.15)
         self.assertFalse(position["can_add"])
+        self.assertEqual(position["strict_max_add_market_value"], 0)
+        self.assertEqual(position["add_guardrail"]["status"], "over_limit")
         industry = {item["industry"]: item for item in analysis["industries"]}["utility"]
         self.assertEqual(industry["status"], "over_limit")
         self.assertIn("仓位纪律发现超限", "\n".join(snapshot["data_quality"]["warnings"]))
         self.assertIn("仓位纪律：已超限", portfolio_ledger.format_snapshot(snapshot))
+
+    def test_strict_add_capacity_uses_post_trade_denominator(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _ledger_paths(Path(tmp))
+            with _patch_ledger_paths(paths):
+                portfolio_ledger.upsert_holding(
+                    symbol="600887",
+                    name="伊利股份",
+                    market="A股",
+                    currency="CNY",
+                    shares=100,
+                    cost_price=5,
+                    current_price=5,
+                    annual_dividend_per_share=1,
+                    tax_rate=0,
+                    as_of=date(2026, 5, 24),
+                )
+                snapshot = portfolio_ledger.upsert_holding(
+                    symbol="600036",
+                    name="招商银行",
+                    market="A股",
+                    currency="CNY",
+                    shares=950,
+                    cost_price=10,
+                    current_price=10,
+                    annual_dividend_per_share=1,
+                    tax_rate=0,
+                    as_of=date(2026, 5, 24),
+                )
+
+        position = {item["symbol"]: item for item in snapshot["position_limit_analysis"]["positions"]}["600887"]
+        self.assertTrue(position["can_add"])
+        self.assertAlmostEqual(position["strict_max_add_market_value"], 555.56, places=2)
+        self.assertEqual(position["add_guardrail"]["binding_constraints"][0]["constraint_id"], "single_position")
+        self.assertEqual(position["max_add_round_lot_shares"], 100)
 
     def test_resource_industry_defaults_to_cyclical_single_limit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

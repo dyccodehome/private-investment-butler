@@ -1538,6 +1538,7 @@ def _build_position_limit_analysis(positions: list[dict[str, Any]], plan: Divide
         }
 
     position_rows: list[dict[str, Any]] = []
+    position_contexts: list[dict[str, Any]] = []
     industry_totals: dict[str, dict[str, Any]] = {}
     warnings: list[str] = []
     for position in cn_positions:
@@ -1548,21 +1549,17 @@ def _build_position_limit_analysis(positions: list[dict[str, Any]], plan: Divide
         industry = _symbol_industry(canonical, position, plan)
         limit_type = _symbol_limit_type(canonical, plan, industry)
         limit_pct = _single_position_limit(limit_type, plan)
-        row = {
-            "symbol": symbol,
-            "name": position.get("name") or "",
-            "market_value": round(market_value, 2),
-            "weight": weight,
-            "limit_type": limit_type,
-            "limit_type_label": LIMIT_TYPE_LABELS.get(limit_type, limit_type),
-            "limit_pct": limit_pct,
-            "status": _limit_status(weight, limit_pct),
-            "can_add": weight < limit_pct,
-            "remaining_market_value_to_limit": round(max(limit_pct - weight, 0) * denominator, 2),
-            "industry": industry,
-            "industry_label": INDUSTRY_LABELS.get(industry, industry),
-        }
-        position_rows.append(row)
+        position_contexts.append(
+            {
+                "position": position,
+                "symbol": symbol,
+                "market_value": market_value,
+                "weight": weight,
+                "industry": industry,
+                "limit_type": limit_type,
+                "limit_pct": limit_pct,
+            }
+        )
         industry_row = industry_totals.setdefault(
             industry,
             {
@@ -1616,6 +1613,49 @@ def _build_position_limit_analysis(positions: list[dict[str, Any]], plan: Divide
         ),
     }
 
+    industry_values = {
+        industry: _to_float(raw.get("market_value"))
+        for industry, raw in industry_totals.items()
+    }
+    for context in position_contexts:
+        position = context["position"]
+        industry = str(context["industry"])
+        market_value = _to_float(context["market_value"])
+        weight = _to_float(context["weight"])
+        limit_pct = _to_float(context["limit_pct"])
+        guardrail = _build_add_guardrail(
+            market_value=market_value,
+            denominator=denominator,
+            single_limit_pct=limit_pct,
+            industry=industry,
+            industry_market_value=industry_values.get(industry, 0.0),
+            industry_limit_pct=plan.industry_limit_pct.get(industry, plan.industry_limit_default_pct),
+            cyclical_market_value=cyclical_value,
+            cyclical_limit_pct=plan.cyclical_total_limit_pct,
+            is_cyclical=industry in cyclical_industries,
+            current_price=_to_float(position.get("current_price")),
+        )
+        position_rows.append(
+            {
+                "symbol": context["symbol"],
+                "name": position.get("name") or "",
+                "market_value": round(market_value, 2),
+                "weight": weight,
+                "limit_type": context["limit_type"],
+                "limit_type_label": LIMIT_TYPE_LABELS.get(str(context["limit_type"]), str(context["limit_type"])),
+                "limit_pct": limit_pct,
+                "status": _limit_status(weight, limit_pct),
+                "can_add": guardrail["can_add"],
+                "remaining_market_value_to_limit": round(max(limit_pct - weight, 0) * denominator, 2),
+                "strict_max_add_market_value": guardrail["strict_max_add_market_value"],
+                "max_add_shares_estimate": guardrail["max_add_shares_estimate"],
+                "max_add_round_lot_shares": guardrail["max_add_round_lot_shares"],
+                "add_guardrail": guardrail,
+                "industry": industry,
+                "industry_label": INDUSTRY_LABELS.get(industry, industry),
+            }
+        )
+
     position_rows.sort(key=lambda item: float(item["weight"]), reverse=True)
     industry_rows.sort(key=lambda item: float(item["weight"]), reverse=True)
     statuses = [str(item.get("status")) for item in position_rows + industry_rows + [cyclical_total]]
@@ -1624,6 +1664,7 @@ def _build_position_limit_analysis(positions: list[dict[str, Any]], plan: Divide
         "scope": "A股红利池",
         "denominator_market_value": round(denominator, 2),
         "policy": "单票、行业和强周期上限均按 A 股红利池市值口径计算；美元收益持仓不参与该约束。",
+        "trade_guardrail_policy": "严格可加额度按买入后 A 股红利池分母重新计算：min((上限比例 * 当前池市值 - 当前约束市值) / (1 - 上限比例))。低于或等于 0 时不得新增买入。",
         "limit_source": str(DIVIDEND_PLAN_PATH),
         "positions": position_rows,
         "industries": industry_rows,
@@ -1891,6 +1932,110 @@ def _limit_status(weight: float, limit_pct: float) -> str:
     if weight >= limit_pct * 0.9:
         return "near_limit"
     return "ok"
+
+
+def _build_add_guardrail(
+    *,
+    market_value: float,
+    denominator: float,
+    single_limit_pct: float,
+    industry: str,
+    industry_market_value: float,
+    industry_limit_pct: float,
+    cyclical_market_value: float,
+    cyclical_limit_pct: float,
+    is_cyclical: bool,
+    current_price: float,
+) -> dict[str, Any]:
+    constraints = [
+        _add_constraint(
+            constraint_id="single_position",
+            label="单票上限",
+            current_market_value=market_value,
+            denominator=denominator,
+            limit_pct=single_limit_pct,
+        ),
+        _add_constraint(
+            constraint_id="industry",
+            label=f"行业上限：{INDUSTRY_LABELS.get(industry, industry)}",
+            current_market_value=industry_market_value,
+            denominator=denominator,
+            limit_pct=industry_limit_pct,
+        ),
+    ]
+    if is_cyclical:
+        constraints.append(
+            _add_constraint(
+                constraint_id="cyclical_total",
+                label="强周期合计上限",
+                current_market_value=cyclical_market_value,
+                denominator=denominator,
+                limit_pct=cyclical_limit_pct,
+            )
+        )
+
+    finite_caps = [_to_float(item.get("max_add_market_value")) for item in constraints]
+    strict_max = max(min(finite_caps), 0.0) if finite_caps else 0.0
+    binding = [
+        item
+        for item in constraints
+        if abs(_to_float(item.get("max_add_market_value")) - strict_max) <= 0.01
+    ]
+    if any(item.get("status") == "over_limit" for item in constraints):
+        status = "over_limit"
+    elif strict_max <= 0:
+        status = "at_limit"
+    elif any(item.get("status") == "near_limit" for item in constraints):
+        status = "near_limit"
+    else:
+        status = "ok"
+
+    max_shares = int(strict_max // current_price) if current_price > 0 else 0
+    return {
+        "status": status,
+        "can_add": strict_max > 0 and status != "over_limit",
+        "strict_max_add_market_value": round(strict_max, 2),
+        "max_add_shares_estimate": max_shares,
+        "max_add_round_lot_shares": (max_shares // 100) * 100,
+        "price_basis": "current_price" if current_price > 0 else "missing",
+        "constraints": constraints,
+        "binding_constraints": binding,
+        "formula": "(limit_pct * pool_market_value - current_constraint_market_value) / (1 - limit_pct)",
+    }
+
+
+def _add_constraint(
+    *,
+    constraint_id: str,
+    label: str,
+    current_market_value: float,
+    denominator: float,
+    limit_pct: float,
+) -> dict[str, Any]:
+    weight = _safe_ratio(current_market_value, denominator)
+    max_add = _strict_add_capacity(
+        current_market_value=current_market_value,
+        denominator=denominator,
+        limit_pct=limit_pct,
+    )
+    return {
+        "constraint_id": constraint_id,
+        "label": label,
+        "current_market_value": round(current_market_value, 2),
+        "current_weight": weight,
+        "limit_pct": limit_pct,
+        "status": _limit_status(weight, limit_pct),
+        "max_add_market_value": round(max_add, 2),
+    }
+
+
+def _strict_add_capacity(*, current_market_value: float, denominator: float, limit_pct: float) -> float:
+    if denominator <= 0 or limit_pct <= 0 or limit_pct >= 1:
+        return 0.0
+    numerator = limit_pct * denominator - current_market_value
+    if numerator <= 0:
+        return 0.0
+    return numerator / (1 - limit_pct)
 
 
 def _duplicate_symbol_groups(holdings: list[Holding]) -> list[dict[str, Any]]:

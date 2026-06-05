@@ -54,6 +54,61 @@ class OutputContractTest(unittest.TestCase):
         history = state.decision_snapshot["historical_judgment_snapshot"]
         self.assertEqual(history["match_count"], 1)
 
+    def test_cash_anchor_buy_output_appends_position_guardrail(self) -> None:
+        state = AgentState(user_input="加仓600900，给我执行建议", framework_id="Cash_Anchor")
+        state.context_bundle_id = "CN_Dividend_Income"
+        state.draft_decision = "结论：可以考虑。关键事实：持仓已披露。风险：注意仓位。下一步：小额执行。"
+        state.disclosed_data.append(
+            DisclosureRecord(
+                skill_name="portfolio_snapshot",
+                arguments={"scope": "cash_anchor_dividend_retirement"},
+                payload={
+                    "result": {
+                        "status": "ok",
+                        "data_type": "portfolio_snapshot",
+                        "data": {
+                            "position_limit_analysis": {
+                                "scope": "A股红利池",
+                                "denominator_market_value": 100000,
+                                "positions": [
+                                    {
+                                        "symbol": "600900",
+                                        "weight": 0.2,
+                                        "limit_pct": 0.15,
+                                        "industry": "utility",
+                                        "industry_label": "电力/公用事业",
+                                        "can_add": False,
+                                        "strict_max_add_market_value": 0,
+                                        "add_guardrail": {
+                                            "status": "over_limit",
+                                            "can_add": False,
+                                            "strict_max_add_market_value": 0,
+                                            "binding_constraints": [
+                                                {
+                                                    "constraint_id": "single_position",
+                                                    "label": "单票上限",
+                                                    "status": "over_limit",
+                                                    "max_add_market_value": 0,
+                                                }
+                                            ],
+                                        },
+                                    }
+                                ],
+                            }
+                        },
+                    }
+                },
+            )
+        )
+
+        apply_output_contract(state)
+
+        self.assertEqual(state.output_contract["status"], "warn")
+        self.assertEqual(state.output_contract["trade_guardrail"]["status"], "blocked")
+        self.assertIn("仓位纪律校验", state.draft_decision)
+        self.assertIn("严格可加额度：0 CNY", state.draft_decision)
+        self.assertEqual(state.decision_snapshot["trade_guardrail"]["symbol"], "600900")
+
 
 if __name__ == "__main__":
     unittest.main()

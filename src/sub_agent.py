@@ -522,9 +522,13 @@ def _compact_position_limit_analysis(value: Any) -> dict[str, Any]:
                 "status",
                 "can_add",
                 "remaining_market_value_to_limit",
+                "strict_max_add_market_value",
+                "max_add_shares_estimate",
+                "max_add_round_lot_shares",
                 "industry",
                 "industry_label",
             )
+            | {"add_guardrail": _compact_add_guardrail(item.get("add_guardrail"))}
             for item in _as_list(value.get("positions"))[:20]
         ],
         "industries": [
@@ -553,6 +557,32 @@ def _compact_position_limit_analysis(value: Any) -> dict[str, Any]:
             "remaining_market_value_to_limit",
         ),
         "warnings": _compact_text_list(value.get("warnings"), limit=6, chars=180),
+    }
+
+
+def _compact_add_guardrail(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "status": value.get("status"),
+        "can_add": value.get("can_add"),
+        "strict_max_add_market_value": value.get("strict_max_add_market_value"),
+        "max_add_shares_estimate": value.get("max_add_shares_estimate"),
+        "max_add_round_lot_shares": value.get("max_add_round_lot_shares"),
+        "price_basis": value.get("price_basis"),
+        "binding_constraints": [
+            _pick(
+                item,
+                "constraint_id",
+                "label",
+                "current_weight",
+                "limit_pct",
+                "status",
+                "max_add_market_value",
+            )
+            for item in _as_list(value.get("binding_constraints"))[:4]
+        ],
+        "formula": value.get("formula"),
     }
 
 
