@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -33,7 +33,10 @@ class SchedulerJob:
     market: str
     schedule: str
     run_time: time
+    time_timezone: str | None = None
     weekday: int | None = None
+    weekdays: tuple[int, ...] | None = None
+    market_date_offset_days: int = 0
 
 
 @dataclass(frozen=True)
@@ -43,6 +46,7 @@ class SchedulerConfig:
     dry_run_by_default: bool
     skip_weekends_for_daily: bool
     skip_holidays: bool
+    use_trading_calendar: bool
     holidays: dict[str, set[str]]
     jobs: tuple[SchedulerJob, ...]
 
@@ -65,26 +69,42 @@ def load_scheduler_config(path: Path = CONFIG_PATH) -> SchedulerConfig:
         dry_run_by_default=bool(section.get("dry_run_by_default", True)),
         skip_weekends_for_daily=bool(section.get("skip_weekends_for_daily", True)),
         skip_holidays=bool(section.get("skip_holidays", True)),
+        use_trading_calendar=bool(section.get("use_trading_calendar", True)),
         holidays=holidays,
         jobs=jobs,
     )
 
 
 def is_job_due(job: SchedulerJob, config: SchedulerConfig, now: datetime, *, last_run_dates: set[str] | None = None) -> bool:
-    local_now = now.astimezone(config.tzinfo)
+    schedule_now = now.astimezone(_job_tzinfo(job, config))
     if not job.enabled:
         return False
-    if _has_run_today(job, local_now.date(), last_run_dates or set()):
+    if _has_run_today(job, schedule_now.date(), last_run_dates or set()):
         return False
-    if local_now.time().replace(second=0, microsecond=0) < job.run_time:
+    if schedule_now.time().replace(second=0, microsecond=0) < job.run_time:
         return False
     if job.schedule == "daily":
-        if config.skip_weekends_for_daily and local_now.weekday() >= 5:
+        if job.weekdays is not None:
+            if schedule_now.weekday() not in job.weekdays:
+                return False
+        elif config.skip_weekends_for_daily and schedule_now.weekday() >= 5:
             return False
-        return not _is_holiday(job.market, local_now.date(), config)
+        market_date = schedule_now.date() + timedelta(days=job.market_date_offset_days)
+        if config.use_trading_calendar and job.market.upper() != "ALL":
+            from src.trading_calendar import is_trading_day
+
+            manual_holidays = config.holidays.get(job.market.upper(), set()) if config.skip_holidays else set()
+            return is_trading_day(job.market, market_date, manual_holidays=manual_holidays)
+        return not _is_holiday(job.market, market_date, config)
     if job.schedule == "weekly":
-        return job.weekday is not None and local_now.weekday() == job.weekday
+        return job.weekday is not None and schedule_now.weekday() == job.weekday
     return False
+
+
+def scheduled_run_date(job: SchedulerJob, config: SchedulerConfig, now: datetime) -> date:
+    """Return the date namespace used for once-per-day run keys."""
+
+    return now.astimezone(_job_tzinfo(job, config)).date()
 
 
 def run_key(job: SchedulerJob, target_date: date) -> str:
@@ -99,7 +119,10 @@ def _parse_job(name: str, section: dict[str, Any]) -> SchedulerJob:
         market=str(section.get("market") or ""),
         schedule=str(section.get("schedule") or "daily").lower(),
         run_time=_parse_time(str(section.get("time") or "00:00")),
+        time_timezone=_parse_optional_timezone(section.get("time_timezone") or section.get("market_timezone")),
         weekday=_parse_weekday(section.get("weekday")),
+        weekdays=_parse_weekdays(section.get("weekdays")),
+        market_date_offset_days=int(section.get("market_date_offset_days") or 0),
     )
 
 
@@ -114,6 +137,33 @@ def _parse_weekday(value: Any) -> int | None:
     if isinstance(value, int):
         return value
     return WEEKDAYS[str(value).strip().lower()]
+
+
+def _parse_weekdays(value: Any) -> tuple[int, ...] | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, str):
+        raw_items = [item.strip() for item in value.split(",") if item.strip()]
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        raw_items = [value]
+    weekdays: list[int] = []
+    for item in raw_items:
+        if isinstance(item, int):
+            weekdays.append(item)
+        else:
+            weekdays.append(WEEKDAYS[str(item).strip().lower()])
+    return tuple(weekdays)
+
+
+def _parse_optional_timezone(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _job_tzinfo(job: SchedulerJob, config: SchedulerConfig) -> ZoneInfo:
+    return ZoneInfo(job.time_timezone) if job.time_timezone else config.tzinfo
 
 
 def _is_holiday(market: str, target_date: date, config: SchedulerConfig) -> bool:

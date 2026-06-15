@@ -7,9 +7,12 @@ from unittest.mock import patch
 from src.dividend_disclosure import (
     build_financial_report_review_items,
     build_cn_dividend_disclosure_review,
+    classify_dividend_candidate_types,
     fetch_dividend_filing_candidates,
+    format_cn_dividend_disclosure_review,
     list_cn_dividend_holdings,
     parse_cash_dividend_per_share,
+    parse_distribution_dates,
 )
 from src.portfolio_ledger import Holding, PortfolioEvent
 
@@ -33,6 +36,19 @@ class DividendDisclosureTest(unittest.TestCase):
         self.assertEqual(parse_cash_dividend_per_share("每股派发现金红利1.75元（含税）"), 1.75)
         self.assertEqual(parse_cash_dividend_per_share("每10股派发现金红利43.00元"), 4.3)
         self.assertEqual(parse_cash_dividend_per_share("2025年度利润分配方案为10派5.01元"), 0.501)
+
+    def test_classifies_dividend_filing_candidates(self) -> None:
+        self.assertEqual(classify_dividend_candidate_types("2025年年度报告")[0], "financial_report")
+        self.assertEqual(classify_dividend_candidate_types("2025年度利润分配方案为10派8.2元")[0], "profit_distribution")
+        self.assertEqual(classify_dividend_candidate_types("2025年度权益分派实施公告")[0], "equity_distribution_implementation")
+        self.assertEqual(
+            parse_distribution_dates("股权登记日2026年6月10日 除权除息日2026年6月11日 现金红利发放日2026年6月11日"),
+            {
+                "record_date": "2026年6月10日",
+                "ex_dividend_date": "2026年6月11日",
+                "cash_payment_date": "2026年6月11日",
+            },
+        )
 
     def test_review_uses_manual_financial_report_workflow(self) -> None:
         holdings = [
@@ -87,6 +103,17 @@ class DividendDisclosureTest(unittest.TestCase):
                             "url": "https://example.com/notice",
                             "source": "东方财富公告",
                             "provider": "akshare_stock_notice_report",
+                        },
+                        {
+                            "symbol": "600900",
+                            "name": "长江电力",
+                            "title": "2025年度权益分派实施公告",
+                            "summary": "每10股派发现金红利8.2元。股权登记日2026年6月10日，除权除息日2026年6月11日，现金红利发放日2026年6月11日。",
+                            "category": "权益分派实施",
+                            "published_at": "2026-06-05",
+                            "url": "https://example.com/implementation",
+                            "source": "东方财富公告",
+                            "provider": "akshare_stock_notice_report",
                         }
                     ]
                 },
@@ -97,9 +124,31 @@ class DividendDisclosureTest(unittest.TestCase):
 
             results = fetch_dividend_filing_candidates(review_items, limit_per_symbol=2)
 
-        self.assertEqual(results[0]["candidate_count"], 1)
+        self.assertEqual(results[0]["candidate_count"], 2)
         self.assertEqual(results[0]["candidates"][0]["cash_dividend_per_share"], 0.82)
+        self.assertEqual(results[0]["classified_candidate_counts"]["profit_distribution"], 2)
+        self.assertEqual(results[0]["classified_candidate_counts"]["equity_distribution_implementation"], 1)
+        self.assertEqual(results[0]["recognized_cash_dividend_per_share"], [0.82])
+        self.assertEqual(results[0]["ledger_update_suggestions"][0]["action"], "update_holding_annual_dividend_per_share")
+        self.assertEqual(results[0]["ledger_update_suggestions"][1]["action"], "record_dividend_cash_event")
+        self.assertEqual(results[0]["ledger_update_suggestions"][1]["suggested_gross_amount"], 820.0)
         fetch_filings.assert_called_once()
+
+        text = format_cn_dividend_disclosure_review(
+            {
+                "holding_count": 1,
+                "announcement_results": results,
+                "matched_announcement_count": 1,
+                "financial_report_review_items": [
+                    {"priority": "high", "symbol": "600900", "name": "长江电力", "reason": "需核验分红。"}
+                ],
+            }
+        )
+
+        self.assertIn("公告拆分", text)
+        self.assertIn("权益分派实施候选 1", text)
+        self.assertIn("可识别每股分红 0.82", text)
+        self.assertIn("账本更新建议", text)
 
 
 if __name__ == "__main__":

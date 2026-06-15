@@ -36,34 +36,34 @@ class GrowthPortfolioTest(unittest.TestCase):
             paths = _growth_paths(Path(tmp))
             with _patch_growth_paths(paths):
                 growth_portfolio.upsert_growth_holding(
-                    symbol="300750.SZ",
-                    name="宁德时代",
-                    market="CN",
+                    symbol="MSFT.US",
+                    name="Microsoft",
+                    market="US",
                     shares=100,
                     cost_price=200,
                     current_price=220,
                     position_type="核心仓",
-                    thesis="动力电池龙头",
+                    thesis="AI 平台",
                 )
                 with patch("src.growth_portfolio.LLMClient") as client_cls, patch(
                     "src.market_data.provider_router.fetch_quote"
                 ) as fetch_quote:
                     fetch_quote.return_value.to_dict.return_value = {
                         "status": "ok",
-                        "source": "yfinance",
-                        "market": "CN",
-                        "symbol": "300750.SZ",
+                        "source": "longbridge",
+                        "market": "US",
+                        "symbol": "MSFT.US",
                         "data": {"current_price": 221},
                         "error": "",
                     }
                     client_cls.for_framework.return_value.complete.return_value = "复盘结果"
-                    reply = growth_portfolio.review_growth_symbol("300750.SZ", chat_id="cli")
+                    reply = growth_portfolio.review_growth_symbol("MSFT.US", chat_id="cli")
 
         self.assertEqual(reply, "复盘结果")
         kwargs = client_cls.for_framework.return_value.complete.call_args.kwargs
         self.assertEqual(kwargs["framework_id"], "Growth_Engine")
-        self.assertEqual(kwargs["context_bundle_id"], "CN_Alpha_Growth")
-        self.assertIn("300750.SZ", kwargs["user_prompt"])
+        self.assertEqual(kwargs["context_bundle_id"], "US_Disruptive_Growth")
+        self.assertIn("MSFT.US", kwargs["user_prompt"])
         self.assertIn("market_data", kwargs["user_prompt"])
 
     def test_enrich_growth_snapshot_uses_market_data_provider(self) -> None:
@@ -130,7 +130,6 @@ def _growth_paths(root: Path) -> dict[str, Path]:
     templates.mkdir(parents=True)
     sub_frameworks.mkdir(parents=True)
     (framework / "constitution.md").write_text("Growth constitution", encoding="utf-8")
-    (sub_frameworks / "CN_Alpha_Growth.md").write_text("CN constitution", encoding="utf-8")
     (sub_frameworks / "US_Disruptive_Growth.md").write_text("US constitution", encoding="utf-8")
     (templates / "growth_holdings.csv").write_text(
         "symbol,name,market,sub_framework,shares,cost_price,current_price,position_type,thesis,status,last_review_at,notes\n",

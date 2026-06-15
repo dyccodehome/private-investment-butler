@@ -17,7 +17,7 @@ from src.state import AgentState, PipelineStatus, SkillRequest
 
 FRAMEWORK_KEYWORDS = {
     "Cash_Anchor": ["现金流", "红利", "股息", "分红", "低估值", "银行", "煤炭", "公用事业", "期权", "option", "covered call", "put", "call", "iv", "权利金", "退休", "持仓", "投入", "工资", "进度"],
-    "Growth_Engine": ["a股", "中国", "成长", "科技自立", "出海", "半导体", "新能源", "ma120", "产业升级", "本土", "美股", "us", "ai", "saas", "生物科技", "英伟达", "微软", "全球", "颠覆", "tam"],
+    "Growth_Engine": ["美股", "us", "ai", "saas", "生物科技", "英伟达", "微软", "全球", "颠覆", "disruptive", "tam", "nvda", "avgo", "msft", "meta", "googl", "amzn"],
 }
 
 CASH_ANCHOR_LEDGER_KEYWORDS = [
@@ -73,10 +73,6 @@ CASH_ANCHOR_CONTEXT_BUNDLES = {
 }
 
 GROWTH_ENGINE_CONTEXT_BUNDLES = {
-    "CN_Alpha_Growth": {
-        "path": "sub_frameworks/CN_Alpha_Growth.md",
-        "keywords": ["a股", "A股", "中国", "科技自立", "出海", "半导体", "新能源", "ma120", "产业升级", "本土"],
-    },
     "US_Disruptive_Growth": {
         "path": "sub_frameworks/US_Disruptive_Growth.md",
         "keywords": ["美股", "us", "ai", "saas", "生物科技", "英伟达", "微软", "全球", "颠覆", "disruptive", "tam"],

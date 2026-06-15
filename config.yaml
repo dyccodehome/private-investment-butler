@@ -94,41 +94,71 @@ scheduler:
   dry_run_by_default: false
   skip_weekends_for_daily: true
   skip_holidays: true
+  use_trading_calendar: true
   holidays:
     CN: []
     US: []
   jobs:
-    growth_cn_daily_review:
+    cash_anchor_cn_premarket_review:
       enabled: true
-      type: growth_daily_review
+      type: cash_anchor_cn_premarket_review
       market: CN
       schedule: daily
-      time: "16:30"
-    cash_anchor_cn_dividend_review:
+      weekdays: [monday, tuesday, wednesday, thursday, friday]
+      time: "08:50"
+    cash_anchor_cn_close_review:
       enabled: true
-      type: cash_anchor_cn_dividend_review
+      type: cash_anchor_cn_close_review
       market: CN
       schedule: daily
-      time: "18:30"
-    cash_anchor_us_income_distribution_sync:
+      weekdays: [monday, tuesday, wednesday, thursday, friday]
+      time: "16:20"
+    cash_anchor_us_premarket_review:
       enabled: true
-      type: cash_anchor_us_income_distribution_sync
+      type: cash_anchor_us_premarket_review
       market: US
       schedule: daily
-      time: "07:15"
-    growth_us_daily_review:
+      weekdays: [monday, tuesday, wednesday, thursday, friday]
+      time: "08:30"
+      time_timezone: America/New_York
+    growth_us_premarket_review:
       enabled: true
-      type: growth_daily_review
+      type: growth_us_premarket_review
       market: US
       schedule: daily
-      time: "06:00"
+      weekdays: [monday, tuesday, wednesday, thursday, friday]
+      time: "08:40"
+      time_timezone: America/New_York
+    cash_anchor_us_close_review:
+      enabled: true
+      type: cash_anchor_us_close_review
+      market: US
+      schedule: daily
+      weekdays: [monday, tuesday, wednesday, thursday, friday]
+      time: "17:10"
+      time_timezone: America/New_York
+    growth_us_close_review:
+      enabled: true
+      type: growth_us_close_review
+      market: US
+      schedule: daily
+      weekdays: [monday, tuesday, wednesday, thursday, friday]
+      time: "17:20"
+      time_timezone: America/New_York
+    cash_anchor_weekly_review:
+      enabled: true
+      type: cash_anchor_weekly_review
+      market: ALL
+      schedule: weekly
+      weekday: sunday
+      time: "20:00"
     growth_weekly_review:
       enabled: true
       type: growth_weekly_review
       market: ALL
       schedule: weekly
       weekday: sunday
-      time: "20:00"
+      time: "20:10"
 
 token_monitor:
   enabled: true
@@ -147,6 +177,9 @@ budgets:
     growth_daily_review:
       max_tokens: 30000
       warn_tokens: 24000
+    scheduled_review:
+      max_tokens: 40000
+      warn_tokens: 32000
     cash_anchor_cn_dividend_review:
       max_tokens: 12000
       warn_tokens: 9000

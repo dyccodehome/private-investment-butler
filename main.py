@@ -271,9 +271,16 @@ def _append_research_dossier_stale_notice(state: AgentState) -> None:
     """Append a short stale dossier warning to the user-visible final answer."""
 
     try:
-        from src.research_dossier import stale_dossier_notice_from_disclosures
+        from src.research_dossier import (
+            build_dossier_update_proposal_from_disclosures,
+            format_dossier_update_proposal_notice,
+            stale_dossier_notice_from_disclosures,
+        )
 
-        notice = stale_dossier_notice_from_disclosures(state.disclosed_data)
+        proposal = build_dossier_update_proposal_from_disclosures(state.disclosed_data)
+        notice = format_dossier_update_proposal_notice(proposal) if proposal else ""
+        if not notice:
+            notice = stale_dossier_notice_from_disclosures(state.disclosed_data)
     except Exception:
         return
     if not notice:
@@ -317,7 +324,6 @@ def _framework_label(value: str) -> str:
         "US_Income_Options": "美元收益",
         "Growth_Engine": "成长引擎",
         "Growth_Engine_Core": "成长引擎",
-        "CN_Alpha_Growth": "境内成长",
         "US_Disruptive_Growth": "全球成长",
     }
     return labels.get(value, value)

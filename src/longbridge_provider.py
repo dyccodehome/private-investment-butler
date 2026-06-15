@@ -18,12 +18,14 @@ from src.init import RUNTIME_DIR
 
 
 LONGBRIDGE_POSITIONS_COMMAND = ["longbridge", "positions", "--format", "json"]
+LONGBRIDGE_WATCHLIST_COMMAND = ["longbridge", "watchlist", "--format", "json"]
 LONGBRIDGE_QUOTE_COMMAND_PREFIX = ["longbridge", "quote"]
 LONGBRIDGE_CASH_FLOW_COMMAND_PREFIX = ["longbridge", "cash-flow"]
 LONGBRIDGE_DIVIDEND_COMMAND_PREFIX = ["longbridge", "dividend"]
 LONGBRIDGE_EXCHANGE_RATE_COMMAND = ["longbridge", "exchange-rate", "--format", "json"]
 CASH_ANCHOR_SYMBOLS = {"QQQI", "QQQI.US", "XQQI", "XQQI.US", "TQQQ", "TQQQ.US"}
 US_GROWTH_EXCLUDED_NOTE = "不属于 Cash Anchor 美股收益框架，保留给 Growth_Engine/US_Disruptive_Growth 或其他策略处理。"
+US_GROWTH_LONG_BRIDGE_RULE = "长桥美股持仓中，除 QQQI/XQQI/TQQQ 等 Cash Anchor 固定现金流标的外，其余全部进入 Growth_Engine/US_Disruptive_Growth 自动化上下文。"
 LONGBRIDGE_CASH_FLOW_SOURCE = "longbridge_cash_flow"
 LONGBRIDGE_DIVIDEND_HISTORY_SOURCE = "longbridge_dividend_history"
 
@@ -40,6 +42,18 @@ class LongbridgePosition:
     available_quantity: float
     cost_price: float
     account_channel: str = ""
+
+
+@dataclass(frozen=True)
+class LongbridgeWatchItem:
+    """Normalized Longbridge watchlist item."""
+
+    symbol: str
+    name: str
+    market: str
+    group_id: str
+    group_name: str
+    is_pinned: bool = False
 
 
 @dataclass(frozen=True)
@@ -105,6 +119,73 @@ def sync_longbridge_positions(timeout_seconds: int = 15) -> dict[str, Any]:
     quotes = fetch_longbridge_quotes(symbols, timeout_seconds=timeout_seconds) if symbols else {}
     _attach_quotes(proposal, quotes)
     return proposal
+
+
+def sync_longbridge_growth_positions(timeout_seconds: int = 15) -> dict[str, Any]:
+    """Read Longbridge positions and return non-Cash-Anchor US growth positions.
+
+    This is read-only context for Growth Engine. It never writes local ledgers.
+    """
+
+    raw = _run_longbridge_positions(timeout_seconds=timeout_seconds)
+    positions = parse_longbridge_positions(raw)
+    payload = build_growth_engine_us_positions_payload(positions)
+    symbols = [item["symbol"] for item in payload["positions"]]
+    quotes = fetch_longbridge_quotes(symbols, timeout_seconds=timeout_seconds) if symbols else {}
+    _attach_quotes_to_items(payload["positions"], quotes)
+    return payload
+
+
+def sync_longbridge_watchlist(timeout_seconds: int = 15) -> dict[str, Any]:
+    """Read Longbridge watchlists and classify US items by strategy island."""
+
+    raw = _run_longbridge_watchlist(timeout_seconds=timeout_seconds)
+    items = parse_longbridge_watchlist(raw)
+    return build_longbridge_watchlist_payload(items)
+
+
+def sync_longbridge_growth_watchlist(timeout_seconds: int = 15) -> dict[str, Any]:
+    """Read Longbridge watchlists and return non-Cash-Anchor US items for Growth Engine."""
+
+    payload = sync_longbridge_watchlist(timeout_seconds=timeout_seconds)
+    return {
+        "source": payload["source"],
+        "scope": "growth_engine_us_watchlist",
+        "command": payload["command"],
+        "classification_rule": payload["classification_rule"],
+        "watchlist": payload["growth_us_watchlist"],
+        "excluded_cash_anchor": payload["cash_anchor_us_watchlist"],
+        "ignored_non_us": payload["ignored_non_us"],
+        "summary": {
+            "total_watch_items": payload["summary"]["total_watch_items"],
+            "growth_us_watch_items": payload["summary"]["growth_us_watch_items"],
+            "cash_anchor_us_watch_items": payload["summary"]["cash_anchor_us_watch_items"],
+            "ignored_non_us_watch_items": payload["summary"]["ignored_non_us_watch_items"],
+        },
+        "write_policy": "read_only_context",
+    }
+
+
+def sync_longbridge_cash_anchor_watchlist(timeout_seconds: int = 15) -> dict[str, Any]:
+    """Read Longbridge watchlists and return Cash Anchor fixed US income items."""
+
+    payload = sync_longbridge_watchlist(timeout_seconds=timeout_seconds)
+    return {
+        "source": payload["source"],
+        "scope": "cash_anchor_us_watchlist",
+        "command": payload["command"],
+        "classification_rule": payload["classification_rule"],
+        "watchlist": payload["cash_anchor_us_watchlist"],
+        "excluded_growth_us": payload["growth_us_watchlist"],
+        "ignored_non_us": payload["ignored_non_us"],
+        "summary": {
+            "total_watch_items": payload["summary"]["total_watch_items"],
+            "cash_anchor_us_watch_items": payload["summary"]["cash_anchor_us_watch_items"],
+            "growth_us_watch_items": payload["summary"]["growth_us_watch_items"],
+            "ignored_non_us_watch_items": payload["summary"]["ignored_non_us_watch_items"],
+        },
+        "write_policy": "read_only_context",
+    }
 
 
 def sync_longbridge_us_income_distributions(
@@ -199,6 +280,35 @@ def parse_longbridge_positions(payload: str | dict[str, Any] | list[Any]) -> lis
     return positions
 
 
+def parse_longbridge_watchlist(payload: str | dict[str, Any] | list[Any]) -> list[LongbridgeWatchItem]:
+    """Parse Longbridge watchlist JSON into flat items."""
+
+    data = json.loads(payload) if isinstance(payload, str) else payload
+    groups = _extract_watchlist_groups(data)
+    items: list[LongbridgeWatchItem] = []
+    for group in groups:
+        group_id = str(group.get("id") or "")
+        group_name = str(group.get("name") or "").strip()
+        securities = group.get("securities") if isinstance(group.get("securities"), list) else []
+        for row in securities:
+            if not isinstance(row, dict):
+                continue
+            symbol = str(row.get("symbol") or "").strip().upper()
+            if not symbol:
+                continue
+            items.append(
+                LongbridgeWatchItem(
+                    symbol=symbol,
+                    name=str(row.get("name") or symbol).strip(),
+                    market=str(row.get("market") or "").strip(),
+                    group_id=group_id,
+                    group_name=group_name,
+                    is_pinned=bool(row.get("is_pinned")),
+                )
+            )
+    return items
+
+
 def build_cash_anchor_sync_proposal(positions: list[LongbridgePosition]) -> dict[str, Any]:
     """Split Longbridge positions into Cash Anchor eligible and excluded holdings."""
 
@@ -222,6 +332,90 @@ def build_cash_anchor_sync_proposal(positions: list[LongbridgePosition]) -> dict
             "excluded_positions": len(excluded),
         },
         "write_policy": "proposal_only",
+    }
+
+
+def build_growth_engine_us_positions_payload(positions: list[LongbridgePosition]) -> dict[str, Any]:
+    """Map Longbridge US positions to Growth Engine, excluding Cash Anchor symbols."""
+
+    cash_anchor = [item for item in positions if _is_us_position(item) and _is_cash_anchor_symbol(item.symbol)]
+    growth = [item for item in positions if _is_us_position(item) and not _is_cash_anchor_symbol(item.symbol)]
+    ignored_non_us = [item for item in positions if not _is_us_position(item)]
+    return {
+        "source": "longbridge_cli",
+        "scope": "growth_engine_us_positions",
+        "command": LONGBRIDGE_POSITIONS_COMMAND,
+        "classification_rule": US_GROWTH_LONG_BRIDGE_RULE,
+        "cash_anchor_symbols": sorted(CASH_ANCHOR_SYMBOLS),
+        "positions": [
+            {
+                **asdict(item),
+                "market": "US",
+                "sub_framework": "US_Disruptive_Growth",
+                "source": "longbridge_growth_position",
+                "reason": "长桥美股持仓且不属于 Cash Anchor 固定现金流标的。",
+            }
+            for item in growth
+        ],
+        "excluded_cash_anchor": [
+            {
+                **asdict(item),
+                "reason": "固定现金流标的，归 Cash_Anchor/US_Income_Options。",
+            }
+            for item in cash_anchor
+        ],
+        "ignored_non_us": [asdict(item) for item in ignored_non_us],
+        "summary": {
+            "total_positions": len(positions),
+            "growth_us_positions": len(growth),
+            "cash_anchor_us_positions": len(cash_anchor),
+            "ignored_non_us_positions": len(ignored_non_us),
+        },
+        "write_policy": "read_only_context",
+    }
+
+
+def build_longbridge_watchlist_payload(items: list[LongbridgeWatchItem]) -> dict[str, Any]:
+    """Classify Longbridge watchlist items into Cash Anchor and Growth Engine."""
+
+    deduped = _dedupe_watch_items(items)
+    cash_anchor = [item for item in deduped if _is_us_watch_item(item) and _is_cash_anchor_symbol(item.symbol)]
+    growth = [item for item in deduped if _is_us_watch_item(item) and not _is_cash_anchor_symbol(item.symbol)]
+    ignored_non_us = [item for item in deduped if not _is_us_watch_item(item)]
+    return {
+        "source": "longbridge_cli",
+        "scope": "classified_watchlist",
+        "command": LONGBRIDGE_WATCHLIST_COMMAND,
+        "classification_rule": US_GROWTH_LONG_BRIDGE_RULE,
+        "cash_anchor_symbols": sorted(CASH_ANCHOR_SYMBOLS),
+        "cash_anchor_us_watchlist": [
+            {
+                **asdict(item),
+                "market": "US",
+                "sub_framework": "US_Income_Options",
+                "source": "longbridge_cash_anchor_watchlist",
+                "reason": "固定现金流标的，归 Cash_Anchor/US_Income_Options。",
+            }
+            for item in cash_anchor
+        ],
+        "growth_us_watchlist": [
+            {
+                **asdict(item),
+                "market": "US",
+                "sub_framework": "US_Disruptive_Growth",
+                "source": "longbridge_growth_watchlist",
+                "reason": "长桥美股自选且不属于 Cash Anchor 固定现金流标的。",
+            }
+            for item in growth
+        ],
+        "ignored_non_us": [asdict(item) for item in ignored_non_us],
+        "summary": {
+            "total_watch_items": len(deduped),
+            "growth_us_watch_items": len(growth),
+            "cash_anchor_us_watch_items": len(cash_anchor),
+            "ignored_non_us_watch_items": len(ignored_non_us),
+        },
+        "write_policy": "read_only_context",
     }
 
 
@@ -400,6 +594,57 @@ def format_longbridge_us_income_result(result: dict[str, Any]) -> str:
 
     lines.append("")
     lines.append("口径：到账金额只认资金流水；滚动预测只看历史每份分配，不写成固定每股年分红。")
+    return "\n".join(lines)
+
+
+def format_longbridge_growth_positions(result: dict[str, Any]) -> str:
+    summary = result.get("summary") or {}
+    lines = [
+        "长桥 Growth Engine 美股持仓读取完成：",
+        f"- Growth US 持仓：{summary.get('growth_us_positions', 0)}",
+        f"- Cash Anchor 固定现金流标的：{summary.get('cash_anchor_us_positions', 0)}",
+        f"- 非美股忽略：{summary.get('ignored_non_us_positions', 0)}",
+        f"- 规则：{result.get('classification_rule') or US_GROWTH_LONG_BRIDGE_RULE}",
+        "- 写入策略：只读上下文，不写入本地账本。",
+    ]
+    positions = result.get("positions") or []
+    if positions:
+        lines.append("")
+        lines.append("Growth US 持仓：")
+        for item in positions:
+            price = item.get("current_price")
+            price_text = f"，当前价 {float(price):,.4f} {item.get('currency') or 'USD'}" if price not in (None, "") else "，当前价未取得"
+            lines.append(
+                f"- {item.get('symbol')} {item.get('name')}：{float(item.get('quantity') or 0):,.2f} 股，"
+                f"成本价 {float(item.get('cost_price') or 0):,.4f} {item.get('currency') or 'USD'}{price_text}"
+            )
+    return "\n".join(lines)
+
+
+def format_longbridge_watchlist(result: dict[str, Any]) -> str:
+    summary = result.get("summary") or {}
+    lines = [
+        "长桥自选股读取完成：",
+        f"- Growth US 自选：{summary.get('growth_us_watch_items', 0)}",
+        f"- Cash Anchor 固定现金流自选：{summary.get('cash_anchor_us_watch_items', 0)}",
+        f"- 非美股或未知市场忽略：{summary.get('ignored_non_us_watch_items', 0)}",
+        f"- 规则：{result.get('classification_rule') or US_GROWTH_LONG_BRIDGE_RULE}",
+        "- 写入策略：只读上下文，不写入本地账本。",
+    ]
+    growth_items = result.get("growth_us_watchlist") or result.get("watchlist") or []
+    if growth_items:
+        lines.append("")
+        lines.append("Growth US 自选：")
+        for item in growth_items[:30]:
+            pinned = " pinned" if item.get("is_pinned") else ""
+            group = f" [{item.get('group_name')}]" if item.get("group_name") else ""
+            lines.append(f"- {item.get('symbol')} {item.get('name')}{group}{pinned}")
+    cash_items = result.get("cash_anchor_us_watchlist") or []
+    if cash_items:
+        lines.append("")
+        lines.append("Cash Anchor 固定现金流自选：")
+        for item in cash_items:
+            lines.append(f"- {item.get('symbol')} {item.get('name')}")
     return "\n".join(lines)
 
 
@@ -629,6 +874,27 @@ def _run_longbridge_positions(timeout_seconds: int) -> str:
     return result.stdout
 
 
+def _run_longbridge_watchlist(timeout_seconds: int) -> str:
+    try:
+        result = subprocess.run(
+            LONGBRIDGE_WATCHLIST_COMMAND,
+            check=False,
+            capture_output=True,
+            text=True,
+            env=_longbridge_env(),
+            timeout=timeout_seconds,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("未找到 longbridge CLI。请先安装并执行 longbridge auth login。") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("longbridge watchlist 执行超时。") from exc
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(f"longbridge watchlist 执行失败：{detail or result.returncode}")
+    return result.stdout
+
+
 def _run_longbridge_quote(symbols: list[str], timeout_seconds: int) -> str:
     command = [*LONGBRIDGE_QUOTE_COMMAND_PREFIX, *symbols, "--format", "json"]
     try:
@@ -733,7 +999,11 @@ def _longbridge_env() -> dict[str, str]:
 
 
 def _attach_quotes(proposal: dict[str, Any], quotes: dict[str, LongbridgeQuote]) -> None:
-    for item in proposal["included"]:
+    _attach_quotes_to_items(proposal["included"], quotes)
+
+
+def _attach_quotes_to_items(items: list[dict[str, Any]], quotes: dict[str, LongbridgeQuote]) -> None:
+    for item in items:
         symbol = str(item["symbol"]).upper()
         quote = quotes.get(symbol) or quotes.get(symbol.split(".", 1)[0])
         if quote is None:
@@ -796,6 +1066,21 @@ def _extract_position_rows(data: Any) -> list[tuple[str, dict[str, Any]]]:
     raise ValueError("无法解析 Longbridge positions JSON。")
 
 
+def _extract_watchlist_groups(data: Any) -> list[dict[str, Any]]:
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+    if isinstance(data, dict):
+        body = data.get("data", data)
+        if isinstance(body, list):
+            return [item for item in body if isinstance(item, dict)]
+        if isinstance(body, dict):
+            for key in ("watchlists", "groups", "list", "items"):
+                value = body.get(key)
+                if isinstance(value, list):
+                    return [item for item in value if isinstance(item, dict)]
+    raise ValueError("无法解析 Longbridge watchlist JSON。")
+
+
 def _extract_list_rows(data: Any) -> list[Any]:
     if isinstance(data, list):
         return data
@@ -820,6 +1105,55 @@ def _is_cash_anchor_symbol(symbol: str) -> bool:
     normalized = symbol.strip().upper()
     base = normalized.split(".", 1)[0]
     return normalized in CASH_ANCHOR_SYMBOLS or base in CASH_ANCHOR_SYMBOLS
+
+
+def _is_us_position(position: LongbridgePosition) -> bool:
+    market = str(position.market or "").strip().upper()
+    symbol = str(position.symbol or "").strip().upper()
+    currency = str(position.currency or "").strip().upper()
+    return market in {"US", "USA"} or symbol.endswith(".US") or currency == "USD"
+
+
+def _is_us_watch_item(item: LongbridgeWatchItem) -> bool:
+    market = str(item.market or "").strip().upper()
+    symbol = str(item.symbol or "").strip().upper()
+    return market in {"US", "USA"} or symbol.endswith(".US")
+
+
+def _dedupe_watch_items(items: list[LongbridgeWatchItem]) -> list[LongbridgeWatchItem]:
+    merged: dict[str, LongbridgeWatchItem] = {}
+    group_names: dict[str, list[str]] = {}
+    for item in items:
+        symbol = item.symbol.upper()
+        existing = merged.get(symbol)
+        group_names.setdefault(symbol, [])
+        if item.group_name and item.group_name not in group_names[symbol]:
+            group_names[symbol].append(item.group_name)
+        if existing is None:
+            merged[symbol] = item
+            continue
+        merged[symbol] = LongbridgeWatchItem(
+            symbol=existing.symbol,
+            name=existing.name or item.name,
+            market=existing.market if existing.market and existing.market != "Unknown" else item.market,
+            group_id=existing.group_id,
+            group_name=existing.group_name,
+            is_pinned=existing.is_pinned or item.is_pinned,
+        )
+    result: list[LongbridgeWatchItem] = []
+    for symbol, item in merged.items():
+        groups = group_names.get(symbol) or ([item.group_name] if item.group_name else [])
+        result.append(
+            LongbridgeWatchItem(
+                symbol=item.symbol,
+                name=item.name,
+                market=item.market,
+                group_id=item.group_id,
+                group_name=",".join(groups),
+                is_pinned=item.is_pinned,
+            )
+        )
+    return result
 
 
 def _cash_anchor_symbols_from_holdings(holdings: list[Any]) -> list[str]:

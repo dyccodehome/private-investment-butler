@@ -79,20 +79,20 @@ COMMAND_REGISTRY: list[CommandDef] = [
     ),
     CommandDef("snapshot", "查看 Cash Anchor 本地持仓快照", "Ledger", aliases=("snap",)),
     CommandDef(
-        "growth-holdings",
-        "批量新增或更新 Growth_Engine 成长持仓，每行一只股票",
-        "Growth",
+        "cash-watchlist",
+        "批量新增或更新 Cash Anchor 自选股",
+        "Ledger",
         args_hint="<multi-line key=value records>",
     ),
-    CommandDef("growth-snapshot", "查看 Growth_Engine 本地持仓和自选快照", "Growth", args_hint="[market=US|CN]"),
-    CommandDef(
-        "growth-watchlist",
-        "批量新增或更新 Growth_Engine 自选股，每行一只股票",
-        "Growth",
-        args_hint="<multi-line key=value records>",
-    ),
+    CommandDef("growth-universe", "查看长桥归一化后的 Growth_Engine 美股 universe", "Growth", aliases=("growth-list",)),
+    CommandDef("growth-snapshot", "查看 Growth_Engine 本地遗留快照", "Growth", args_hint="[market=US]"),
     CommandDef("growth-review", "按 Growth_Engine 框架复盘单个持仓或自选标的", "Growth", args_hint="<symbol>"),
-    CommandDef("sync", "同步外部券商数据；当前支持长桥持仓和美元分配", "Ledger", args_hint="longbridge|longbridge dividends"),
+    CommandDef(
+        "sync",
+        "同步外部券商数据；当前支持长桥持仓、自选股和美元分配",
+        "Ledger",
+        args_hint="longbridge|longbridge growth|longbridge watchlist|longbridge dividends",
+    ),
     CommandDef("apply", "确认并写入外部同步结果；当前支持 longbridge cash_anchor", "Ledger", args_hint="longbridge cash_anchor"),
     CommandDef(
         "absorb",
@@ -106,6 +106,20 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "Knowledge",
         aliases=("refresh-dossier",),
         args_hint="framework=<Cash_Anchor|Growth_Engine> symbol=<code> [market=CN|US]",
+    ),
+    CommandDef(
+        "review-dossier",
+        "把新闻、公告和财报转成研究档案更新建议，不自动写入",
+        "Knowledge",
+        aliases=("update-dossier", "dossier-review"),
+        args_hint="framework=<Cash_Anchor|Growth_Engine> symbol=<code> [market=CN|US]",
+    ),
+    CommandDef(
+        "scheduled-review",
+        "手动试运行或执行一个已配置的定时工作流",
+        "Ops",
+        aliases=("schedule-run",),
+        args_hint="<job_name> [execute=true]",
     ),
 ]
 
@@ -149,14 +163,16 @@ def handle_command(raw_text: str, chat_id: str) -> str | None:
         "sell": _handle_sell,
         "dividend": _handle_dividend,
         "snapshot": _handle_snapshot,
-        "growth-holdings": _handle_growth_holdings,
+        "cash-watchlist": _handle_cash_watchlist,
+        "growth-universe": _handle_growth_universe,
         "growth-snapshot": _handle_growth_snapshot,
-        "growth-watchlist": _handle_growth_watchlist,
         "growth-review": _handle_growth_review,
         "sync": _handle_sync,
         "apply": _handle_apply,
         "absorb": _handle_absorb,
         "dossier-refresh": _handle_dossier_refresh,
+        "review-dossier": _handle_review_dossier,
+        "scheduled-review": _handle_scheduled_review,
     }
     handler = handlers.get(command.name)
     if not handler:
@@ -185,26 +201,29 @@ def help_text() -> str:
         "/sell symbol=<code> shares=<n> price=<price> [date=YYYY-MM-DD] - 记录卖出事件",
         "/dividend symbol=<code> amount=<amount> [date=YYYY-MM-DD] - 记录现金分红",
         "/snapshot - 查看 Cash Anchor 本地持仓快照",
+        "/cash-watchlist 后接多行自选参数 - 批量新增或更新红利/现金流自选股",
         "/sync longbridge - 读取长桥持仓并生成同步提案",
+        "/sync longbridge growth - 读取长桥并生成 Growth Engine 美股 universe",
+        "/sync longbridge watchlist - 读取长桥自选股并按 Cash/Growth 分类",
         "/sync longbridge dividends [start=YYYY-MM-DD] [end=YYYY-MM-DD] - 同步长桥美元分配到账和历史分配",
         "/apply longbridge cash_anchor - 确认后把长桥 QQQI/XQQI/TQQQ 写入 Cash Anchor 账本",
         "",
         "Growth Engine：",
-        "/growth-holdings 后接多行持仓参数 - 批量新增或更新成长持仓",
-        "/growth-watchlist 后接多行自选参数 - 批量新增或更新成长自选股",
-        "/growth-snapshot [market=US|CN] - 查看成长持仓和自选快照",
+        "/growth-universe - 查看长桥归一化后的美股 universe",
+        "/growth-snapshot [market=US] - 查看 Growth 本地遗留快照",
         "/growth-review <symbol> - 按成长框架复盘单个持仓或自选标的",
         "",
         "知识吸收：",
         "/absorb <target_id> <文章链接、摘录或你的思考>",
         "/dossier-refresh framework=<Cash_Anchor|Growth_Engine> symbol=<code> [market=CN|US] - 刷新个股研究档案事实证据",
+        "/review-dossier framework=<Cash_Anchor|Growth_Engine> symbol=<code> [market=CN|US] - 生成研究档案更新建议，不自动写入",
+        "/scheduled-review <job_name> [execute=true] - 手动试运行或执行定时工作流",
         "",
         "可用 target_id：",
         "- Cash_Anchor：现金流总框架，共同逻辑、资金池边界、总现金流目标",
         "- Cash_Anchor/CN_Dividend_Income：A 股红利子框架，境内红利、股息、MA120、分红税",
         "- Cash_Anchor/US_Income_Options：美股美元收益子框架，QQQI、XQQI、TQQQ、美元分红、期权收益",
-        "- Growth_Engine：成长股总框架，共同逻辑、估值、增长、风控边界",
-        "- Growth_Engine/CN_Alpha_Growth：A 股成长子框架，本土阿尔法、产业升级、趋势纪律",
+        "- Growth_Engine：美股成长总框架，共同逻辑、估值、增长、风控边界",
         "- Growth_Engine/US_Disruptive_Growth：美股成长子框架，全球创新、AI、SaaS、TAM 与护城河",
         "",
         "示例：",
@@ -239,7 +258,7 @@ def _handle_frameworks(args: str, chat_id: str) -> str:
     return (
         "当前策略框架：\n"
         "- Cash_Anchor：现金流策略岛，含 A 股红利与美股收益期权子框架\n"
-        "- Growth_Engine：成长股策略岛，含 A 股成长与美股成长子框架"
+        "- Growth_Engine：美股成长策略岛，长桥 universe 是唯一标的来源"
     )
 
 
@@ -292,6 +311,45 @@ def _handle_dossier_refresh(args: str, chat_id: str) -> str:
         limit=limit,
     )
     return format_dossier_refresh_result(result)
+
+
+def _handle_review_dossier(args: str, chat_id: str) -> str:
+    from src.research_dossier import build_dossier_update_proposal, format_dossier_update_proposal
+
+    parsed = _parse_key_values(args)
+    positional = [part for part in args.strip().split() if "=" not in part]
+    framework_id = parsed.get("framework") or parsed.get("framework_id")
+    symbol = parsed.get("symbol")
+    if positional and positional[0] in {"Cash_Anchor", "Growth_Engine"}:
+        framework_id = framework_id or positional[0]
+        if len(positional) >= 2:
+            symbol = symbol or positional[1]
+    elif positional:
+        symbol = symbol or positional[0]
+
+    if framework_id not in {"Cash_Anchor", "Growth_Engine"}:
+        return (
+            "用法：/review-dossier framework=<Cash_Anchor|Growth_Engine> symbol=<code> [market=CN|US] [days=120]\n"
+            "示例：/review-dossier framework=Cash_Anchor symbol=600900 market=CN days=180"
+        )
+    if not symbol:
+        return "请提供 symbol，例如：/review-dossier framework=Cash_Anchor symbol=600900 market=CN"
+
+    try:
+        days = int(parsed.get("days") or 120)
+        limit = int(parsed.get("limit") or 10)
+    except ValueError:
+        return "days/limit 必须是整数。"
+
+    proposal = build_dossier_update_proposal(
+        framework_id=framework_id,
+        symbol=symbol,
+        market=parsed.get("market"),
+        query=parsed.get("query"),
+        days=days,
+        limit=limit,
+    )
+    return format_dossier_update_proposal(proposal)
 
 
 def _handle_contribute(args: str, chat_id: str) -> str:
@@ -536,75 +594,18 @@ def _handle_snapshot(args: str, chat_id: str) -> str:
     return format_snapshot(build_portfolio_snapshot())
 
 
-def _handle_growth_holdings(args: str, chat_id: str) -> str:
-    from src.growth_portfolio import upsert_growth_holding
+def _handle_cash_watchlist(args: str, chat_id: str) -> str:
+    from src.cash_anchor_watchlist import upsert_cash_watch_item
 
     rows = _parse_batch_rows(args)
     if not rows:
         return (
-            "用法：/growth-holdings 后接多行持仓记录，每行一只股票。\n"
-            "每行格式：symbol=<code> shares=<n> cost=<price> current=<price> "
-            "[name=<name>] [market=US|CN] [type=<核心仓|试错仓>] [thesis=<买入逻辑>]\n"
+            "用法：/cash-watchlist 后接多行自选记录，每行一只股票。\n"
+            "每行格式：symbol=<code> [name=<name>] [market=CN|US] "
+            "[category=dividend|income|option] [priority=high|medium|low] reason=<关注原因> trigger=<触发条件>\n"
             "示例：\n"
-            "/growth-holdings\n"
-            "symbol=300750.SZ name=宁德时代 market=CN shares=100 cost=180 current=195 type=核心仓 thesis=动力电池龙头\n"
-            "symbol=688256.SH name=寒武纪 market=CN shares=50 cost=600 current=650 type=试错仓 thesis=国产AI芯片"
-        )
-
-    results: list[str] = []
-    failures: list[str] = []
-    required = ["symbol", "shares", "cost", "current"]
-    for index, row in enumerate(rows, start=1):
-        missing = [key for key in required if key not in row]
-        if missing:
-            failures.append(f"第 {index} 行缺少字段：{', '.join(missing)}")
-            continue
-        try:
-            snapshot = upsert_growth_holding(
-                symbol=row["symbol"],
-                name=row.get("name", ""),
-                market=row.get("market", ""),
-                sub_framework=row.get("sub_framework", ""),
-                shares=_required_amount(row["shares"]),
-                cost_price=_required_amount(row["cost"]),
-                current_price=_required_amount(row["current"]),
-                position_type=row.get("type") or row.get("position_type", "核心仓"),
-                thesis=row.get("thesis", ""),
-                status=row.get("status", "active"),
-                last_review_at=row.get("last_review_at", ""),
-                notes=row.get("notes", ""),
-            )
-        except ValueError as exc:
-            failures.append(f"第 {index} 行失败：{exc}")
-            continue
-        holding = snapshot["updated_holding"]
-        action = "更新" if snapshot["holding_action"] == "updated" else "新增"
-        results.append(f"- {action}：{holding['symbol']} {holding['name']}")
-
-    return _format_batch_result("成长持仓批量写入完成", results, failures)
-
-
-def _handle_growth_snapshot(args: str, chat_id: str) -> str:
-    from src.growth_portfolio import build_growth_snapshot, format_growth_snapshot
-
-    parsed = _parse_key_values(args)
-    market = parsed.get("market") or args.strip() or None
-    return format_growth_snapshot(build_growth_snapshot(market=market))
-
-
-def _handle_growth_watchlist(args: str, chat_id: str) -> str:
-    from src.growth_portfolio import upsert_growth_watch_item
-
-    rows = _parse_batch_rows(args)
-    if not rows:
-        return (
-            "用法：/growth-watchlist 后接多行自选记录，每行一只股票。\n"
-            "每行格式：symbol=<code> [name=<name>] [market=US|CN] "
-            "[priority=high|medium|low] reason=<关注原因> trigger=<触发条件>\n"
-            "示例：\n"
-            "/growth-watchlist\n"
-            "symbol=300750.SZ name=宁德时代 market=CN priority=high reason=新能源龙头 trigger=利润重新加速\n"
-            "symbol=688981.SH name=中芯国际 market=CN priority=medium reason=国产半导体 trigger=毛利率企稳"
+            "/cash-watchlist\n"
+            "symbol=600900.SH name=长江电力 market=CN category=dividend priority=high reason=核心红利 trigger=股息率回到目标区间"
         )
 
     results: list[str] = []
@@ -614,11 +615,11 @@ def _handle_growth_watchlist(args: str, chat_id: str) -> str:
             failures.append(f"第 {index} 行缺少字段：symbol")
             continue
         try:
-            snapshot = upsert_growth_watch_item(
+            snapshot = upsert_cash_watch_item(
                 symbol=row["symbol"],
                 name=row.get("name", ""),
-                market=row.get("market", ""),
-                sub_framework=row.get("sub_framework", ""),
+                market=row.get("market", "CN"),
+                category=row.get("category", "dividend"),
                 priority=row.get("priority", "medium"),
                 watch_reason=row.get("reason") or row.get("watch_reason", ""),
                 trigger_condition=row.get("trigger") or row.get("trigger_condition", ""),
@@ -633,7 +634,25 @@ def _handle_growth_watchlist(args: str, chat_id: str) -> str:
         action = "更新" if snapshot["watch_action"] == "updated" else "新增"
         results.append(f"- {action}：{item['symbol']} {item['name']}")
 
-    return _format_batch_result("成长自选批量写入完成", results, failures)
+    return _format_batch_result("Cash Anchor 自选股批量写入完成", results, failures)
+
+
+def _handle_growth_holdings(args: str, chat_id: str) -> str:
+    return "Growth Engine 手工持仓写入已停用。请使用 /growth-universe 查看长桥 universe。"
+
+
+def _handle_growth_snapshot(args: str, chat_id: str) -> str:
+    from src.growth_portfolio import build_growth_snapshot, format_growth_snapshot
+
+    parsed = _parse_key_values(args)
+    market = parsed.get("market") or args.strip() or None
+    if market and market.upper() != "US":
+        return "Growth Engine 已停用非美股成长快照；请使用 /growth-snapshot market=US 或 /growth-universe。"
+    return format_growth_snapshot(build_growth_snapshot(market=market))
+
+
+def _handle_growth_watchlist(args: str, chat_id: str) -> str:
+    return "Growth Engine 手工自选写入已停用。请在长桥维护自选股，再用 /growth-universe 查看。"
 
 
 def _handle_growth_review(args: str, chat_id: str) -> str:
@@ -660,6 +679,24 @@ def _handle_sync(args: str, chat_id: str) -> str:
         return format_longbridge_sync_proposal(proposal)
 
     parts = target.split()
+    if len(parts) >= 2 and parts[0] == "longbridge" and parts[1] in {"growth", "growth-us", "us-growth"}:
+        from src.growth_universe import format_growth_universe, sync_growth_universe
+
+        try:
+            result = sync_growth_universe()
+        except RuntimeError as exc:
+            return str(exc)
+        return format_growth_universe(result)
+
+    if len(parts) >= 2 and parts[0] == "longbridge" and parts[1] in {"watchlist", "watch", "watchlists"}:
+        from src.longbridge_provider import format_longbridge_watchlist, sync_longbridge_watchlist
+
+        try:
+            result = sync_longbridge_watchlist()
+        except RuntimeError as exc:
+            return str(exc)
+        return format_longbridge_watchlist(result)
+
     if len(parts) >= 2 and parts[0] == "longbridge" and parts[1] in {"dividend", "dividends", "income", "distribution", "distributions"}:
         from src.longbridge_provider import format_longbridge_us_income_result, sync_longbridge_us_income_distributions
 
@@ -677,9 +714,21 @@ def _handle_sync(args: str, chat_id: str) -> str:
     return (
         "用法：\n"
         "/sync longbridge\n"
+        "/sync longbridge growth\n"
+        "/sync longbridge watchlist\n"
         "/sync longbridge dividends [start=YYYY-MM-DD] [end=YYYY-MM-DD]\n"
         "A 股持仓仍以本地账本、财报和公告为准。"
     )
+
+
+def _handle_growth_universe(args: str, chat_id: str) -> str:
+    from src.growth_universe import format_growth_universe, sync_growth_universe
+
+    try:
+        payload = sync_growth_universe()
+    except RuntimeError as exc:
+        return str(exc)
+    return format_growth_universe(payload)
 
 
 def _handle_apply(args: str, chat_id: str) -> str:
@@ -693,6 +742,30 @@ def _handle_apply(args: str, chat_id: str) -> str:
     except RuntimeError as exc:
         return str(exc)
     return format_longbridge_apply_result(result)
+
+
+def _handle_scheduled_review(args: str, chat_id: str) -> str:
+    from src.scheduler.config import load_scheduler_config
+    from src.scheduler.runner import run_job_once
+
+    config = load_scheduler_config()
+    parts = [part for part in args.strip().split() if part]
+    if not parts:
+        job_names = "\n".join(f"- {job.name}" for job in config.jobs if job.enabled)
+        return (
+            "用法：/scheduled-review <job_name> [execute=true]\n"
+            "默认只试运行，不调用模型和外部数据源。\n\n"
+            "已启用任务：\n"
+            f"{job_names}"
+        )
+
+    job_name = parts[0]
+    parsed = _parse_key_values(" ".join(parts[1:]))
+    execute = str(parsed.get("execute") or parsed.get("run") or "false").lower() in {"1", "true", "yes", "y"}
+    job = next((item for item in config.jobs if item.name == job_name), None)
+    if job is None:
+        return f"未知任务：{job_name}\n可发送 /scheduled-review 查看已启用任务。"
+    return run_job_once(job, chat_id=chat_id, dry_run=not execute, send_result=False)
 
 
 def _parse_key_values(args: str) -> dict[str, str]:

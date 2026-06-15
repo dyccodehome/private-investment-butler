@@ -10,14 +10,14 @@ class GrowthDailyReviewScriptTest(unittest.TestCase):
     @patch("scripts.run_growth_daily_review.communication_gate.send")
     @patch("scripts.run_growth_daily_review.review_growth_daily")
     @patch("scripts.run_growth_daily_review.get_config")
-    @patch("sys.argv", ["run_growth_daily_review.py", "--market", "CN"])
+    @patch("sys.argv", ["run_growth_daily_review.py", "--market", "US"])
     def test_uses_default_chat_id_from_env_config(self, get_config, review_daily, send) -> None:
         get_config.return_value.messaging.return_value.default_chat_id = "oc_default"
         review_daily.return_value = "复盘结果"
 
         run_growth_daily_review.main()
 
-        review_daily.assert_called_once_with("CN", chat_id="oc_default")
+        review_daily.assert_called_once_with("US", chat_id="oc_default")
         send.assert_called_once_with("oc_default", "复盘结果")
 
     @patch("scripts.run_growth_daily_review.communication_gate.send")

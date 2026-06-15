@@ -8,7 +8,11 @@ from unittest.mock import patch
 
 from src.research_dossier import (
     append_user_action_to_dossier,
+    build_dossier_update_proposal,
+    build_dossier_update_proposal_from_disclosures,
     extract_symbol,
+    format_dossier_update_proposal,
+    format_dossier_update_proposal_notice,
     refresh_dossier_facts,
     stale_dossier_notice_from_disclosures,
 )
@@ -99,6 +103,163 @@ class ResearchDossierTest(unittest.TestCase):
             self.assertEqual(result["last_fact_update_at"], "")
             self.assertTrue(result["freshness"]["is_stale"])
 
+    def test_build_dossier_update_proposal_does_not_write_dossier(self) -> None:
+        news_payload = {
+            "status": "ok",
+            "source": "market_intel_news",
+            "data_type": "news",
+            "data": {
+                "items": [
+                    {
+                        "title": "长江电力近期经营保持稳定",
+                        "summary": "新闻线索，需继续核验正式公告。",
+                        "published_at": "2026-06-01",
+                        "source": "fixture news",
+                        "url": "https://example.com/news",
+                    }
+                ]
+            },
+            "source_chain": [{"provider": "fixture", "status": "ok"}],
+            "error": "",
+        }
+        announcement_payload = {
+            "status": "ok",
+            "source": "market_intel_announcements",
+            "data_type": "announcement",
+            "data": {
+                "items": [
+                    {
+                        "symbol": "600900",
+                        "name": "长江电力",
+                        "title": "2025年度利润分配方案为10派8.2元",
+                        "category": "利润分配",
+                        "published_at": "2026-05-30",
+                        "source": "东方财富公告",
+                        "url": "https://example.com/dividend",
+                    }
+                ]
+            },
+            "source_chain": [{"provider": "fixture", "status": "ok"}],
+            "error": "",
+        }
+        filing_payload = {
+            "status": "ok",
+            "source": "market_intel_filings",
+            "data_type": "filing",
+            "data": {
+                "items": [
+                    {
+                        "symbol": "600900",
+                        "name": "长江电力",
+                        "title": "长江电力2025年年度报告",
+                        "category": "财务报告",
+                        "published_at": "2026-05-30",
+                        "source": "东方财富公告",
+                        "url": "https://example.com/report",
+                    }
+                ]
+            },
+            "source_chain": [{"provider": "fixture", "status": "ok"}],
+            "error": "",
+        }
+        with tempfile.TemporaryDirectory() as tmpdir, patch("src.research_dossier.FRAMEWORKS_DIR", Path(tmpdir)), patch(
+            "src.market_intel.fetch_company_news", return_value=news_payload
+        ), patch("src.market_intel.fetch_company_announcements", return_value=announcement_payload), patch(
+            "src.market_intel.fetch_filings", return_value=filing_payload
+        ):
+            proposal = build_dossier_update_proposal(framework_id="Cash_Anchor", symbol="600900", market="CN")
+
+            self.assertEqual(proposal["status"], "ok")
+            self.assertEqual(proposal["write_policy"], "proposal_only_no_auto_write")
+            self.assertFalse(Path(proposal["path"]).exists())
+            self.assertEqual(proposal["item_counts"], {"news": 1, "announcement": 1, "filing": 1})
+            fact_types = {item["fact_type"] for item in proposal["candidate_facts"]}
+            self.assertIn("financial_report", fact_types)
+            self.assertIn("profit_distribution", fact_types)
+            self.assertIn("evidence_log", proposal["proposed_dossier_patch"])
+
+            formatted = format_dossier_update_proposal(proposal)
+
+        self.assertIn("研究档案更新建议", formatted)
+        self.assertIn("未自动写入", formatted)
+
+    def test_build_dossier_update_proposal_from_existing_disclosures(self) -> None:
+        proposal = build_dossier_update_proposal_from_disclosures(
+            [
+                DisclosureRecord(
+                    skill_name="research_dossier",
+                    payload={
+                        "result": {
+                            "data": {
+                                "framework_id": "Cash_Anchor",
+                                "symbol": "600900",
+                                "path": "frameworks/Cash_Anchor/research_dossiers/600900.json",
+                                "exists": True,
+                                "freshness": {"is_stale": True, "reason": "档案还没有事实更新时间。"},
+                                "dossier": {
+                                    "company_name": "长江电力",
+                                    "last_fact_update_at": "",
+                                },
+                            }
+                        }
+                    },
+                ),
+                DisclosureRecord(
+                    skill_name="news-search",
+                    payload={
+                        "result": {
+                            "status": "ok",
+                            "source": "market_intel_news",
+                            "data_type": "news",
+                            "data": {
+                                "items": [
+                                    {
+                                        "title": "长江电力经营新闻",
+                                        "published_at": "2026-06-01",
+                                        "source": "fixture news",
+                                    }
+                                ]
+                            },
+                            "source_chain": [],
+                            "error": "",
+                        }
+                    },
+                ),
+                DisclosureRecord(
+                    skill_name="announcement-search",
+                    payload={
+                        "result": {
+                            "status": "ok",
+                            "source": "market_intel_announcements",
+                            "data_type": "announcement",
+                            "data": {
+                                "items": [
+                                    {
+                                        "title": "2025年度利润分配方案为10派8.2元",
+                                        "category": "利润分配",
+                                        "published_at": "2026-05-30",
+                                        "source": "东方财富公告",
+                                    }
+                                ]
+                            },
+                            "source_chain": [],
+                            "error": "",
+                        }
+                    },
+                ),
+            ]
+        )
+
+        self.assertIsNotNone(proposal)
+        assert proposal is not None
+        self.assertEqual(proposal["status"], "ok")
+        self.assertEqual(proposal["item_counts"]["announcement"], 1)
+        self.assertIn("profit_distribution", {item["fact_type"] for item in proposal["candidate_facts"]})
+
+        notice = format_dossier_update_proposal_notice(proposal)
+        self.assertIn("研究档案更新候选", notice)
+        self.assertIn("/review-dossier framework=Cash_Anchor symbol=600900", notice)
+
     def test_stale_notice_reads_research_dossier_disclosure(self) -> None:
         notice = stale_dossier_notice_from_disclosures(
             [
@@ -121,7 +282,7 @@ class ResearchDossierTest(unittest.TestCase):
         )
 
         self.assertIn("NVDA", notice)
-        self.assertIn("/dossier-refresh framework=Growth_Engine symbol=NVDA", notice)
+        self.assertIn("/review-dossier framework=Growth_Engine symbol=NVDA", notice)
 
 
 if __name__ == "__main__":

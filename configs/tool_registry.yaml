@@ -94,15 +94,18 @@ tools:
     data_type: announcement
 
   longbridge_positions:
-    description: 读取长桥持仓并生成只读同步提案。
+    description: 读取长桥持仓和自选股并生成只读同步提案；固定现金流标的归 Cash Anchor，其余美股持仓/自选归 Growth Engine 美股上下文。
     risk_level: medium
     access_type: external_read
     allowed_frameworks:
       - Cash_Anchor
+      - Growth_Engine
     allowed_agents:
       - command
+      - scheduler
     allowed_commands:
       - longbridge positions --format json
+      - longbridge watchlist --format json
     requires_human_approval: false
     timeout_seconds: 15
     audit_level: full

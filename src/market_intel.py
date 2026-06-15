@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import ssl
 from datetime import date, datetime, timedelta
 from typing import Any
 from urllib import error, request
@@ -17,6 +18,9 @@ from src.market_data.symbol_mapper import infer_market, normalize_symbol
 
 
 DEFAULT_USER_AGENT = "private-investment-butler/1.0 contact: local@example.com"
+HTTP_TIMEOUT_SECONDS = 10
+MAX_AKSHARE_NOTICE_DAYS = 7
+MAX_AKSHARE_NOTICE_REQUESTS = 12
 
 
 def fetch_company_news(
@@ -276,8 +280,12 @@ def _akshare_stock_notices(*, query: str, symbol: str, days: int) -> dict[str, A
     tokens = _filter_tokens(query, symbol)
     items: list[dict[str, Any]] = []
     errors: list[str] = []
-    for day in _recent_dates(days):
+    request_count = 0
+    for day in _recent_dates(min(days, MAX_AKSHARE_NOTICE_DAYS)):
         for category in categories:
+            if request_count >= MAX_AKSHARE_NOTICE_REQUESTS:
+                break
+            request_count += 1
             try:
                 with contextlib.redirect_stderr(io.StringIO()):
                     frame = ak.stock_notice_report(symbol=category, date=day)
@@ -302,10 +310,16 @@ def _akshare_stock_notices(*, query: str, symbol: str, days: int) -> dict[str, A
                         "provider": "akshare_stock_notice_report",
                     }
                 )
+        if request_count >= MAX_AKSHARE_NOTICE_REQUESTS:
+            break
     if items:
         return {"status": "ok", "items": items, "error": ""}
     error_text = "；".join(errors[:3])
-    return {"status": "empty" if not errors else "error", "items": [], "error": error_text or "AkShare 公告源无结果。"}
+    return {
+        "status": "empty" if not errors else "error",
+        "items": [],
+        "error": error_text or f"AkShare 公告源无结果（已扫描 {request_count} 次）。",
+    }
 
 
 def _yfinance_news(symbol_or_query: str) -> dict[str, Any]:
@@ -394,8 +408,17 @@ def _sec_filing_url(cik: str, accession: str, document: str) -> str:
 
 def _http_json(url: str, *, headers: dict[str, str] | None = None) -> dict[str, Any]:
     req = request.Request(url, headers=headers or {})
-    with request.urlopen(req, timeout=20) as response:
+    with request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS, context=_ssl_context()) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def _ssl_context() -> ssl.SSLContext:
+    try:
+        import certifi  # type: ignore
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
 
 
 def _standard_intel_payload(

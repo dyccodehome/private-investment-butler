@@ -28,15 +28,16 @@ class CommandRegistryTest(unittest.TestCase):
         self.assertNotIn("/plan contribution=<amount> dividend=<amount>", text)
         self.assertIn("/holding", text)
         self.assertIn("/holdings", text)
+        self.assertIn("/cash-watchlist", text)
         self.assertIn("/sync longbridge dividends", text)
-        self.assertIn("/growth-holdings", text)
-        self.assertIn("/growth-watchlist", text)
+        self.assertIn("/growth-universe", text)
         self.assertIn("/growth-review", text)
         self.assertIn("/absorb", text)
         self.assertIn("/dossier-refresh", text)
+        self.assertIn("/review-dossier", text)
+        self.assertIn("/scheduled-review", text)
         self.assertIn("Cash_Anchor/CN_Dividend_Income", text)
         self.assertIn("Cash_Anchor/US_Income_Options", text)
-        self.assertIn("Growth_Engine/CN_Alpha_Growth", text)
         self.assertIn("Growth_Engine/US_Disruptive_Growth", text)
 
     def test_plan_usage_message(self) -> None:
@@ -228,6 +229,62 @@ class CommandRegistryTest(unittest.TestCase):
         self.assertEqual(sync_income.call_args.kwargs["start"].isoformat(), "2026-01-01")
         self.assertEqual(sync_income.call_args.kwargs["end"].isoformat(), "2026-06-04")
 
+    @patch("src.growth_universe.sync_growth_universe")
+    def test_sync_longbridge_growth_uses_provider(self, sync_growth) -> None:
+        sync_growth.return_value = {
+            "classification_rule": "非现金流美股归 Growth",
+            "universe": [
+                {
+                    "symbol": "NVDA.US",
+                    "name": "NVIDIA",
+                    "asset_type": "stock",
+                    "source_types": ["longbridge_position"],
+                    "source_groups": [],
+                    "has_position": True,
+                }
+            ],
+            "summary": {
+                "universe_count": 1,
+                "source_positions": 1,
+                "source_watch_items": 0,
+                "option_contracts_mapped": 0,
+                "excluded_cash_anchor": 0,
+                "excluded_leveraged_etf": 0,
+                "excluded_index": 0,
+                "excluded_non_us": 0,
+            },
+            "excluded": [],
+        }
+
+        reply = handle_command("/sync longbridge growth", "cli")
+
+        self.assertIsNotNone(reply)
+        self.assertIn("Growth Engine 长桥 universe", reply or "")
+        self.assertIn("NVDA.US", reply or "")
+        sync_growth.assert_called_once()
+
+    @patch("src.longbridge_provider.sync_longbridge_watchlist")
+    def test_sync_longbridge_watchlist_uses_provider(self, sync_watchlist) -> None:
+        sync_watchlist.return_value = {
+            "classification_rule": "非现金流美股归 Growth",
+            "growth_us_watchlist": [{"symbol": "NVDA.US", "name": "NVIDIA", "group_name": "us"}],
+            "cash_anchor_us_watchlist": [{"symbol": "QQQI.US", "name": "QQQI"}],
+            "ignored_non_us": [],
+            "summary": {
+                "growth_us_watch_items": 1,
+                "cash_anchor_us_watch_items": 1,
+                "ignored_non_us_watch_items": 0,
+            },
+        }
+
+        reply = handle_command("/sync longbridge watchlist", "cli")
+
+        self.assertIsNotNone(reply)
+        self.assertIn("长桥自选股读取完成", reply or "")
+        self.assertIn("NVDA.US", reply or "")
+        self.assertIn("QQQI.US", reply or "")
+        sync_watchlist.assert_called_once()
+
     @patch("src.longbridge_provider.apply_longbridge_cash_anchor_sync")
     def test_apply_longbridge_uses_provider(self, apply_sync) -> None:
         apply_sync.return_value = {
@@ -256,44 +313,72 @@ class CommandRegistryTest(unittest.TestCase):
         self.assertEqual(reply, "成长复盘")
         review_symbol.assert_called_once_with("NVDA.US", chat_id="cli")
 
-    @patch("src.growth_portfolio.upsert_growth_holding")
-    def test_growth_holdings_batch_uses_provider(self, upsert_holding) -> None:
-        upsert_holding.side_effect = [
-            {
-                "updated_holding": {"symbol": "300750.SZ", "name": "宁德时代"},
-                "holding_action": "created",
-            },
-            {
-                "updated_holding": {"symbol": "688256.SH", "name": "寒武纪"},
-                "holding_action": "updated",
-            },
-        ]
-        reply = handle_command(
-            "/growth-holdings\n"
-            "symbol=300750.SZ name=宁德时代 market=CN shares=100 cost=180 current=195\n"
-            "symbol=688256.SH name=寒武纪 market=CN shares=50 cost=600 current=650",
-            "cli",
-        )
-        self.assertIsNotNone(reply)
-        self.assertIn("成功 2 条", reply or "")
-        self.assertIn("300750.SZ", reply or "")
-        self.assertEqual(upsert_holding.call_count, 2)
-
-    @patch("src.growth_portfolio.upsert_growth_watch_item")
-    def test_growth_watchlist_batch_uses_provider(self, upsert_watch_item) -> None:
+    @patch("src.cash_anchor_watchlist.upsert_cash_watch_item")
+    def test_cash_watchlist_batch_uses_provider(self, upsert_watch_item) -> None:
         upsert_watch_item.return_value = {
-            "updated_watch_item": {"symbol": "300750.SZ", "name": "宁德时代"},
+            "updated_watch_item": {"symbol": "600900.SH", "name": "长江电力"},
             "watch_action": "created",
         }
         reply = handle_command(
-            "/growth-watchlist\n"
-            "symbol=300750.SZ name=宁德时代 market=CN priority=high reason=新能源龙头 trigger=利润重新加速",
+            "/cash-watchlist\n"
+            "symbol=600900.SH name=长江电力 market=CN priority=high reason=核心红利 trigger=股息率回到目标区间",
             "cli",
         )
         self.assertIsNotNone(reply)
         self.assertIn("成功 1 条", reply or "")
-        self.assertIn("300750.SZ", reply or "")
+        self.assertIn("600900.SH", reply or "")
         upsert_watch_item.assert_called_once()
+
+    @patch("src.scheduler.runner.run_job_once")
+    def test_scheduled_review_command_runs_dry_run_by_default(self, run_job_once) -> None:
+        run_job_once.return_value = "试运行结果"
+        reply = handle_command("/scheduled-review growth_us_close_review", "cli")
+
+        self.assertEqual(reply, "试运行结果")
+        self.assertTrue(run_job_once.call_args.kwargs["dry_run"])
+        self.assertTrue(run_job_once.call_args.kwargs["send_result"] is False)
+
+    @patch("src.scheduler.runner.run_job_once")
+    def test_scheduled_review_command_can_execute(self, run_job_once) -> None:
+        run_job_once.return_value = "正式结果"
+        reply = handle_command("/scheduled-review growth_us_close_review execute=true", "cli")
+
+        self.assertEqual(reply, "正式结果")
+        self.assertFalse(run_job_once.call_args.kwargs["dry_run"])
+        self.assertTrue(run_job_once.call_args.kwargs["send_result"] is False)
+
+    @patch("src.growth_universe.sync_growth_universe")
+    def test_growth_universe_command_uses_provider(self, sync_universe) -> None:
+        sync_universe.return_value = {
+            "classification_rule": "longbridge universe",
+            "universe": [
+                {
+                    "symbol": "NVDA.US",
+                    "name": "NVIDIA",
+                    "asset_type": "stock",
+                    "source_types": ["longbridge_watchlist"],
+                    "source_groups": [],
+                    "has_position": False,
+                }
+            ],
+            "excluded": [],
+            "summary": {
+                "universe_count": 1,
+                "source_positions": 0,
+                "source_watch_items": 1,
+                "option_contracts_mapped": 0,
+                "excluded_cash_anchor": 0,
+                "excluded_leveraged_etf": 0,
+                "excluded_index": 0,
+                "excluded_non_us": 0,
+            },
+        }
+
+        reply = handle_command("/growth-universe", "cli")
+
+        self.assertIsNotNone(reply)
+        self.assertIn("Growth Engine 长桥 universe", reply or "")
+        self.assertIn("NVDA.US", reply or "")
 
     @patch("src.research_dossier.refresh_dossier_facts")
     def test_dossier_refresh_uses_research_dossier_provider(self, refresh_dossier) -> None:
@@ -322,6 +407,40 @@ class CommandRegistryTest(unittest.TestCase):
 
         self.assertIsNotNone(reply)
         self.assertIn("用法：/dossier-refresh", reply or "")
+
+    @patch("src.research_dossier.build_dossier_update_proposal")
+    def test_update_dossier_alias_uses_research_dossier_proposal(self, build_proposal) -> None:
+        build_proposal.return_value = {
+            "status": "ok",
+            "framework_id": "Cash_Anchor",
+            "symbol": "600900",
+            "path": "frameworks/Cash_Anchor/research_dossiers/600900.json",
+            "existing_dossier": {
+                "freshness": {"reason": "档案还没有事实更新时间。"},
+            },
+            "item_counts": {"news": 1, "announcement": 1, "filing": 1},
+            "candidate_facts": [
+                {
+                    "fact_type_label": "利润分配候选",
+                    "target_sections": ["fundamental_notes", "quantitative_checks", "evidence_log"],
+                    "evidence": {
+                        "title": "2025年度利润分配方案为10派8.2元",
+                        "published_at": "2026-05-30",
+                    },
+                }
+            ],
+            "warnings": [],
+        }
+
+        reply = handle_command("/update-dossier framework=Cash_Anchor symbol=600900 market=CN days=180", "cli")
+
+        self.assertIsNotNone(reply)
+        self.assertIn("研究档案更新建议", reply or "")
+        build_proposal.assert_called_once()
+        self.assertEqual(build_proposal.call_args.kwargs["framework_id"], "Cash_Anchor")
+        self.assertEqual(build_proposal.call_args.kwargs["symbol"], "600900")
+        self.assertEqual(build_proposal.call_args.kwargs["market"], "CN")
+        self.assertEqual(build_proposal.call_args.kwargs["days"], 180)
 
 
 if __name__ == "__main__":

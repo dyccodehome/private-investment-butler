@@ -9,15 +9,14 @@ from src.sub_agent import _compact_disclosed_data_for_prompt, intake_precheck, l
 
 
 class SubAgentContextTest(unittest.TestCase):
-    def test_growth_engine_loads_cn_sub_framework(self) -> None:
+    def test_growth_engine_does_not_load_cn_sub_framework(self) -> None:
         state = AgentState(user_input="A股半导体成长股跌破 MA120 怎么处理", framework_id="Growth_Engine")
 
         context = load_strategy_context(state)
 
-        self.assertEqual(state.context_bundle_id, "CN_Alpha_Growth")
+        self.assertEqual(state.context_bundle_id, "Growth_Engine_Core")
         self.assertIn("frameworks/Growth_Engine/constitution.md", state.loaded_context_files)
-        self.assertIn("frameworks/Growth_Engine/sub_frameworks/CN_Alpha_Growth.md", state.loaded_context_files)
-        self.assertIn("中国成长引擎策略宪法", context)
+        self.assertNotIn("中国成长引擎策略宪法", context)
 
     def test_growth_engine_loads_us_sub_framework(self) -> None:
         state = AgentState(user_input="美股 AI SaaS 龙头估值怎么看", framework_id="Growth_Engine")

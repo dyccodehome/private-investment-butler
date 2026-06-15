@@ -96,6 +96,52 @@ class MarketIntelTest(unittest.TestCase):
 
         self.assertEqual({item["symbol"] for item in result["items"]}, {"600900"})
 
+    def test_cn_notice_scan_has_request_cap(self) -> None:
+        calls: list[tuple[str, str]] = []
+
+        class Frame:
+            def to_dict(self, orient: str) -> list[dict[str, str]]:
+                return []
+
+        def stock_notice_report(symbol: str, date: str) -> Frame:
+            calls.append((symbol, date))
+            return Frame()
+
+        fake_akshare = types.SimpleNamespace(stock_notice_report=stock_notice_report)
+        dates = [f"202606{day:02d}" for day in range(1, 21)]
+        with patch.dict(sys.modules, {"akshare": fake_akshare}), patch.object(
+            market_intel, "_recent_dates", return_value=dates
+        ):
+            result = market_intel._akshare_stock_notices(
+                query="600900 长江电力",
+                symbol="600900",
+                days=30,
+            )
+
+        self.assertEqual(result["status"], "empty")
+        self.assertLessEqual(len(calls), market_intel.MAX_AKSHARE_NOTICE_REQUESTS)
+
+    def test_http_json_uses_ssl_context(self) -> None:
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self) -> bytes:
+                return b'{"ok": true}'
+
+        with patch.object(market_intel, "_ssl_context", return_value="ctx") as ssl_context, patch.object(
+            market_intel.request, "urlopen", return_value=Response()
+        ) as urlopen:
+            result = market_intel._http_json("https://example.com/data.json")
+
+        self.assertEqual(result, {"ok": True})
+        ssl_context.assert_called_once()
+        self.assertEqual(urlopen.call_args.kwargs["context"], "ctx")
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], market_intel.HTTP_TIMEOUT_SECONDS)
+
     def test_market_event_context_merges_news_and_announcements(self) -> None:
         with patch.object(market_intel, "fetch_company_news") as fetch_news, patch.object(
             market_intel, "fetch_company_announcements"

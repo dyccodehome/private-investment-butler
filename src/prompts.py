@@ -139,6 +139,28 @@ def growth_review_user_prompt(
     )
 
 
+def scheduled_review_system_prompt() -> str:
+    return _render("scheduled_review/system.md")
+
+
+def scheduled_review_user_prompt(
+    *,
+    framework_id: str,
+    market: str,
+    workflow_type: str,
+    review_date: str,
+    context_json: str,
+) -> str:
+    return _render(
+        "scheduled_review/user.md",
+        framework_id=framework_id,
+        market=market,
+        workflow_type=workflow_type,
+        review_date=review_date,
+        context_json=context_json,
+    )
+
+
 def _render(relative_path: str, **values: Any) -> str:
     replacements = {"response_style": _template("shared/response_style.md"), **values}
     text = _template(relative_path)

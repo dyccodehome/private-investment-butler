@@ -1,4 +1,4 @@
-"""Growth_Engine local holdings, watchlist, and review workflow."""
+"""Growth_Engine legacy local snapshot and review workflow."""
 
 from __future__ import annotations
 
@@ -20,10 +20,8 @@ TEMPLATE_DIR = GROWTH_DIR / "data_templates"
 HOLDINGS_PATH = DATA_DIR / "growth_holdings.csv"
 WATCHLIST_PATH = DATA_DIR / "growth_watchlist.csv"
 
-VALID_MARKETS = {"CN", "US", "A股"}
+VALID_MARKETS = {"US"}
 MARKET_TO_SUB_FRAMEWORK = {
-    "CN": "CN_Alpha_Growth",
-    "A股": "CN_Alpha_Growth",
     "US": "US_Disruptive_Growth",
 }
 
@@ -221,7 +219,7 @@ def review_growth_symbol(symbol: str, chat_id: str | None = None) -> str:
     if not snapshot["holdings"] and not snapshot["watchlist"]:
         return (
             f"未在 Growth_Engine 本地持仓或自选中找到：{clean_symbol}\n"
-            "请先用 /growth-holdings 录入持仓，或用 /growth-watchlist 补充自选股。"
+            "Growth Engine 的正式标的来源已经改为长桥 universe，请先确认长桥持仓或自选股。"
         )
     snapshot = enrich_growth_snapshot_with_market_data(snapshot)
     return _run_growth_review_llm(
@@ -297,7 +295,7 @@ def enrich_growth_snapshot_with_market_data(snapshot: dict[str, Any]) -> dict[st
     enriched = dict(snapshot)
     enriched["market_data"] = market_data
     enriched["market_data_policy"] = {
-        "source_rule": "CN uses yfinance; US uses Longbridge.",
+        "source_rule": "US uses Longbridge.",
         "failure_policy": "If status is error, treat current quote/dividend as missing and state the data gap.",
     }
     return enriched
@@ -380,7 +378,7 @@ def _run_growth_review_llm(
 
 def _load_growth_context(sub_framework: str) -> str:
     files = [GROWTH_DIR / "constitution.md"]
-    if sub_framework in {"CN_Alpha_Growth", "US_Disruptive_Growth"}:
+    if sub_framework == "US_Disruptive_Growth":
         files.append(GROWTH_DIR / "sub_frameworks" / f"{sub_framework}.md")
     return "\n\n---\n\n".join(f"# 来源：{path}\n\n{path.read_text(encoding='utf-8')}" for path in files)
 
@@ -484,16 +482,16 @@ def _infer_market(symbol: str) -> str:
     upper = symbol.upper()
     if upper.endswith(".US"):
         return "US"
-    return "CN"
+    raise ValueError("Growth_Engine 仅支持美股标的，请使用 .US 代码或长桥 universe。")
 
 
 def _normalize_market(market: str | None) -> str:
     clean = (market or "").strip().upper()
-    if clean in {"A", "A股", "CN", "CHINA"}:
-        return "CN"
     if clean in {"US", "USA", "美股"}:
         return "US"
-    return clean or "CN"
+    if not clean:
+        return "US"
+    raise ValueError("Growth_Engine 仅支持 US 市场。")
 
 
 def _to_float(value: Any) -> float:

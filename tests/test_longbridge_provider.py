@@ -52,6 +52,155 @@ class LongbridgeProviderTest(unittest.TestCase):
         self.assertEqual(proposal["included"][0]["symbol"], "QQQI.US")
         self.assertEqual(proposal["excluded"][0]["symbol"], "NVDA.US")
 
+    def test_build_growth_us_payload_excludes_cash_anchor_symbols(self) -> None:
+        positions = [
+            longbridge_provider.LongbridgePosition(
+                symbol="QQQI.US",
+                name="QQQI",
+                market="US",
+                currency="USD",
+                quantity=10,
+                available_quantity=10,
+                cost_price=50,
+            ),
+            longbridge_provider.LongbridgePosition(
+                symbol="NVDA.US",
+                name="NVIDIA",
+                market="US",
+                currency="USD",
+                quantity=2,
+                available_quantity=2,
+                cost_price=900,
+            ),
+            longbridge_provider.LongbridgePosition(
+                symbol="AAPL.US",
+                name="Apple",
+                market="US",
+                currency="USD",
+                quantity=1,
+                available_quantity=1,
+                cost_price=180,
+            ),
+        ]
+
+        payload = longbridge_provider.build_growth_engine_us_positions_payload(positions)
+
+        self.assertEqual(payload["summary"]["growth_us_positions"], 2)
+        self.assertEqual(payload["summary"]["cash_anchor_us_positions"], 1)
+        self.assertEqual([item["symbol"] for item in payload["positions"]], ["NVDA.US", "AAPL.US"])
+        self.assertEqual(payload["positions"][0]["sub_framework"], "US_Disruptive_Growth")
+        self.assertEqual(payload["write_policy"], "read_only_context")
+
+    def test_parse_and_classify_longbridge_watchlist(self) -> None:
+        payload = [
+            {
+                "id": 1,
+                "name": "all",
+                "securities": [
+                    {"symbol": "QQQI.US", "name": "QQQI", "market": "US", "is_pinned": True},
+                    {"symbol": "NVDA.US", "name": "NVIDIA", "market": "US", "is_pinned": False},
+                    {"symbol": "ETHUSD.HAS", "name": "ETH/USD", "market": "Unknown", "is_pinned": True},
+                ],
+            },
+            {
+                "id": 2,
+                "name": "us",
+                "securities": [
+                    {"symbol": "NVDA.US", "name": "NVIDIA", "market": "US", "is_pinned": True},
+                ],
+            },
+        ]
+
+        items = longbridge_provider.parse_longbridge_watchlist(payload)
+        classified = longbridge_provider.build_longbridge_watchlist_payload(items)
+
+        self.assertEqual(classified["summary"]["total_watch_items"], 3)
+        self.assertEqual(classified["summary"]["cash_anchor_us_watch_items"], 1)
+        self.assertEqual(classified["summary"]["growth_us_watch_items"], 1)
+        self.assertEqual(classified["summary"]["ignored_non_us_watch_items"], 1)
+        self.assertEqual(classified["cash_anchor_us_watchlist"][0]["symbol"], "QQQI.US")
+        self.assertEqual(classified["growth_us_watchlist"][0]["symbol"], "NVDA.US")
+        self.assertTrue(classified["growth_us_watchlist"][0]["is_pinned"])
+        self.assertIn("all", classified["growth_us_watchlist"][0]["group_name"])
+        self.assertIn("us", classified["growth_us_watchlist"][0]["group_name"])
+
+    def test_sync_watchlist_uses_fixed_readonly_command(self) -> None:
+        completed = type(
+            "Completed",
+            (),
+            {
+                "returncode": 0,
+                "stdout": json.dumps(
+                    [
+                        {
+                            "id": 1,
+                            "name": "us",
+                            "securities": [
+                                {"symbol": "QQQI.US", "name": "QQQI", "market": "US"},
+                                {"symbol": "NVDA.US", "name": "NVIDIA", "market": "US"},
+                            ],
+                        }
+                    ]
+                ),
+                "stderr": "",
+            },
+        )()
+        with patch("src.longbridge_provider.subprocess.run", return_value=completed) as run:
+            payload = longbridge_provider.sync_longbridge_watchlist(timeout_seconds=3)
+
+        self.assertEqual(run.call_args.args[0], ["longbridge", "watchlist", "--format", "json"])
+        self.assertFalse(run.call_args.kwargs.get("shell", False))
+        self.assertEqual(run.call_args.kwargs["timeout"], 3)
+        self.assertEqual(payload["summary"]["growth_us_watch_items"], 1)
+
+    def test_sync_growth_positions_uses_fixed_readonly_commands(self) -> None:
+        positions_completed = type(
+            "Completed",
+            (),
+            {
+                "returncode": 0,
+                "stdout": json.dumps(
+                    [
+                        {
+                            "symbol": "QQQI.US",
+                            "name": "QQQI",
+                            "currency": "USD",
+                            "quantity": "20",
+                            "market": "US",
+                            "available_quantity": "20",
+                            "cost_price": "50",
+                        },
+                        {
+                            "symbol": "NVDA.US",
+                            "name": "NVIDIA",
+                            "currency": "USD",
+                            "quantity": "3",
+                            "market": "US",
+                            "available_quantity": "3",
+                            "cost_price": "900",
+                        },
+                    ]
+                ),
+                "stderr": "",
+            },
+        )()
+        quote_completed = type(
+            "Completed",
+            (),
+            {
+                "returncode": 0,
+                "stdout": json.dumps([{"symbol": "NVDA.US", "last": "950"}]),
+                "stderr": "",
+            },
+        )()
+        with patch("src.longbridge_provider.subprocess.run", side_effect=[positions_completed, quote_completed]) as run:
+            payload = longbridge_provider.sync_longbridge_growth_positions(timeout_seconds=3)
+
+        self.assertEqual(run.call_args_list[0].args[0], ["longbridge", "positions", "--format", "json"])
+        self.assertEqual(run.call_args_list[1].args[0], ["longbridge", "quote", "NVDA.US", "--format", "json"])
+        self.assertEqual(payload["positions"][0]["symbol"], "NVDA.US")
+        self.assertEqual(payload["positions"][0]["current_price"], 950)
+
     def test_sync_uses_fixed_readonly_command(self) -> None:
         positions_completed = type(
             "Completed",

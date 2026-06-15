@@ -43,20 +43,22 @@ scripts/
 ## 建议任务类型
 
 ```text
-cash_anchor_cn_daily_review
-growth_cn_daily_review
-growth_us_daily_review
+cash_anchor_cn_premarket_review
+cash_anchor_cn_close_review
+growth_us_premarket_review
+growth_us_close_review
 market_data_refresh
 ```
 
 第一阶段建议只做：
 
-- `growth_cn_daily_review`
-- `growth_us_daily_review`
+- `growth_us_premarket_review`
+- `growth_us_close_review`
 
 第二阶段再加：
 
-- `cash_anchor_cn_daily_review`
+- `cash_anchor_cn_premarket_review`
+- `cash_anchor_cn_close_review`
 - `market_data_refresh`
 
 ## 配置方案
@@ -74,16 +76,18 @@ scheduler:
     CN: []
     US: []
   jobs:
-    growth_cn_daily_review:
+    growth_us_close_review:
       enabled: true
-      type: growth_daily_review
-      time: "16:30"
-      market: CN
+      type: growth_us_close_review
+      time: "17:20"
+      time_timezone: America/New_York
+      market: US
       schedule: daily
-    growth_us_daily_review:
+    growth_us_premarket_review:
       enabled: true
-      type: growth_daily_review
-      time: "06:00"
+      type: growth_us_premarket_review
+      time: "08:40"
+      time_timezone: America/New_York
       market: US
       schedule: daily
     growth_weekly_review:
@@ -97,7 +101,7 @@ scheduler:
 
 当前已进入一周试用：`scheduler.enabled=true`，并且 `dry_run_by_default=false`。启动本机常驻进程后，到点会真实调用 LLM 并推送飞书。需要暂停时，把 `scheduler.enabled` 改回 `false`。
 
-美股夏令时是风险点。第一阶段先用北京时间固定时间，后续再考虑按美股交易日历和夏令时自动调整。
+美股任务已支持 `time_timezone: America/New_York`，按美东时间判断触发点后自动换算到北京时间。
 
 ## 用户流程
 
@@ -110,8 +114,8 @@ python3 scripts/run_scheduler.py --list
 2. 用户干跑单个任务：
 
 ```bash
-python3 scripts/run_scheduler.py --run-once growth_cn_daily_review
-python3 scripts/run_scheduler.py --run-once growth_us_daily_review
+python3 scripts/run_scheduler.py --run-once growth_us_premarket_review
+python3 scripts/run_scheduler.py --run-once growth_us_close_review
 python3 scripts/run_scheduler.py --run-once growth_weekly_review
 ```
 
@@ -128,7 +132,7 @@ python3 scripts/run_scheduler.py --run-loop
 真实执行单次任务需要显式加 `--execute`：
 
 ```bash
-python3 scripts/run_scheduler.py --run-once growth_cn_daily_review --execute
+python3 scripts/run_scheduler.py --run-once growth_us_close_review --execute
 ```
 
 ## 数据文件
@@ -164,11 +168,12 @@ python3 scripts/run_scheduler.py --run-once growth_cn_daily_review --execute
 - [x] 第一阶段采用本机常驻进程。
 - [x] 单元测试覆盖 job 选择、时间判断、干跑路径。
 - [x] 单元测试覆盖失败路径。
+- [x] 支持任务执行锁，避免同一个 job 被重复触发并发运行。
+- [x] 支持美股任务按美东时间触发，自动处理夏令时和冬令时换算。
 
 ## 待确认问题
 
-- 是否需要任务执行锁，避免同一任务重复运行。
-- 节假日列表后续是手工维护，还是接入交易日历。
+- 美股夏令时切换日前后仍需生产运行观察。
 
 ## 实现记录
 
@@ -177,3 +182,6 @@ python3 scripts/run_scheduler.py --run-once growth_cn_daily_review --execute
 - 2026-06-03：已补充 Scheduler 单元测试，覆盖配置解析、时间判断、周末跳过、干跑不调用 LLM/飞书、失败日志和错误推送。
 - 2026-06-03：用户确认第一阶段运行方式为本机常驻。
 - 2026-06-03：用户确认开启一周试用，`scheduler.enabled=true`，`dry_run_by_default=false`。
+- 2026-06-07：已接入交易日历缓存，美股交易日用本地规则，A 股交易日可通过 AkShare 刷新。
+- 2026-06-07：已新增 job 级别文件锁，锁目录为 `runtime/scheduler/locks/`；重复触发同一任务会跳过并在 `runs.jsonl` 中记录 `skipped`。
+- 2026-06-07：已新增 `time_timezone` 配置，美股开盘前和收盘后任务改为按 `America/New_York` 的 08:30/08:40/17:10/17:20 触发，自动换算到北京时间。

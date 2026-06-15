@@ -125,6 +125,8 @@ def workflow_for_call_site(call_site: str) -> str:
 
     if "growth_portfolio.review" in call_site:
         return "growth_daily_review"
+    if "scheduled_review.run" in call_site:
+        return "scheduled_review"
     if "knowledge_absorber.run_knowledge_absorption" in call_site:
         return "knowledge_absorb"
     if "absorb_discussion.run_absorb_discussion_turn" in call_site:

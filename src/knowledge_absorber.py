@@ -38,11 +38,6 @@ ABSORB_TARGETS = {
         "美股美元收益子框架",
     ),
     "Growth_Engine": ("Growth_Engine", "constitution.md", "成长股总框架"),
-    "Growth_Engine/CN_Alpha_Growth": (
-        "Growth_Engine",
-        "sub_frameworks/CN_Alpha_Growth.md",
-        "A 股成长子框架",
-    ),
     "Growth_Engine/US_Disruptive_Growth": (
         "Growth_Engine",
         "sub_frameworks/US_Disruptive_Growth.md",
@@ -107,8 +102,7 @@ def absorb_usage_text(prefix: str | None = None) -> str:
             "- Cash_Anchor：现金流总框架，共同逻辑、资金池边界、总现金流目标",
             "- Cash_Anchor/CN_Dividend_Income：A 股红利子框架，境内红利、股息、MA120、分红税",
             "- Cash_Anchor/US_Income_Options：美股美元收益子框架，QQQI、XQQI、TQQQ、美元分红、期权收益",
-            "- Growth_Engine：成长股总框架，共同逻辑、估值、增长、风控边界",
-            "- Growth_Engine/CN_Alpha_Growth：A 股成长子框架，本土阿尔法、产业升级、趋势纪律",
+            "- Growth_Engine：美股成长总框架，共同逻辑、估值、增长、风控边界",
             "- Growth_Engine/US_Disruptive_Growth：美股成长子框架，全球创新、AI、SaaS、TAM 与护城河",
             "",
             "示例：",

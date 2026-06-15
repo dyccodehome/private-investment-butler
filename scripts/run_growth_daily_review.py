@@ -2,9 +2,8 @@
 """Run Growth_Engine daily market review.
 
 Examples:
-  python3 scripts/run_growth_daily_review.py --market CN
   python3 scripts/run_growth_daily_review.py --market US --chat-id oc_xxx
-  FEISHU_DEFAULT_CHAT_ID=oc_xxx python3 scripts/run_growth_daily_review.py --market CN
+  FEISHU_DEFAULT_CHAT_ID=oc_xxx python3 scripts/run_growth_daily_review.py --market US
 """
 
 from __future__ import annotations
@@ -25,7 +24,7 @@ from src.growth_portfolio import review_growth_daily
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Growth_Engine daily review.")
-    parser.add_argument("--market", required=True, choices=["CN", "US"], help="Market to review.")
+    parser.add_argument("--market", required=True, choices=["US"], help="Market to review.")
     parser.add_argument("--chat-id", default="", help="Feishu chat_id to send the report to.")
     args = parser.parse_args()
 

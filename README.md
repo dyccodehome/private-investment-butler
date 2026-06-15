@@ -13,7 +13,7 @@ This repository is an engineering system, not a trading bot. It is designed to k
 | Markets | A-shares and US stocks only. Hong Kong stocks are intentionally out of scope for now. |
 | Runtime | Local-first Python pipeline controlled by `main.py`, without LangGraph or heavyweight state-machine frameworks. |
 | Communication | Feishu long connection for messages and approval cards. CLI is also supported for local testing. |
-| Strategies | `Cash_Anchor` for cash flow, dividends, option income, and defensive liquidity. `Growth_Engine` for A-share growth and US disruptive growth. |
+| Strategies | `Cash_Anchor` for cash flow, dividends, option income, and defensive liquidity. `Growth_Engine` for US disruptive growth only, sourced from Longbridge. |
 | Data access | Governed Skill disclosure through `configs/tool_registry.yaml`; no free-form shell execution by LLMs. |
 | Trading | No order placement, order amendment, or order cancellation. Brokerage integrations are read-only and fixed-function. |
 | WebUI | Not part of the current product direction. Local observability APIs exist for traces and cost review. |
@@ -95,7 +95,7 @@ private_investment_butler/
 | Strategy | Sub-frameworks | Role |
 | --- | --- | --- |
 | `Cash_Anchor` | `CN_Dividend_Income`, `US_Income_Options` | Defensive cash-flow anchor. Tracks A-share dividend income, US income assets, option premium discipline, liquidity, and local ledgers. |
-| `Growth_Engine` | `CN_Alpha_Growth`, `US_Disruptive_Growth` | Offensive growth engine. Tracks A-share alpha growth and US disruptive growth through thesis, valuation, liquidity, and trend discipline. |
+| `Growth_Engine` | `US_Disruptive_Growth` | Offensive US growth engine. The investable universe comes from read-only Longbridge positions and watchlists after cash-anchor, option, leveraged ETF, and index filters. |
 
 Each strategy owns private local state:
 
@@ -200,11 +200,14 @@ Scheduled jobs live in `config.yaml::scheduler.jobs`.
 
 | Job | Market | Schedule | Purpose |
 | --- | --- | --- | --- |
-| `growth_cn_daily_review` | CN | Daily 16:30 Asia/Shanghai | A-share growth review after market close. |
-| `cash_anchor_cn_dividend_review` | CN | Daily 18:30 Asia/Shanghai | A-share dividend workflow based on financial reports, dividend announcements, and distribution notices. |
-| `cash_anchor_us_income_distribution_sync` | US | Daily 07:15 Asia/Shanghai | US income distribution sync and review. |
-| `growth_us_daily_review` | US | Daily 06:00 Asia/Shanghai | US growth review after US market close. |
-| `growth_weekly_review` | ALL | Sunday 20:00 Asia/Shanghai | Weekly review across growth frameworks. |
+| `cash_anchor_cn_premarket_review` | CN | Weekdays 08:50 Asia/Shanghai | A-share dividend premarket plan. |
+| `cash_anchor_cn_close_review` | CN | Weekdays 16:20 Asia/Shanghai | A-share dividend post-close review. |
+| `cash_anchor_us_premarket_review` | US | Weekdays 08:30 America/New_York | US income premarket plan. |
+| `growth_us_premarket_review` | US | Weekdays 08:40 America/New_York | US growth premarket plan. |
+| `cash_anchor_us_close_review` | US | Weekdays 17:10 America/New_York | US income post-close review. |
+| `growth_us_close_review` | US | Weekdays 17:20 America/New_York | US growth post-close review. |
+| `cash_anchor_weekly_review` | ALL | Sunday 20:00 Asia/Shanghai | Weekly Cash Anchor review. |
+| `growth_weekly_review` | ALL | Sunday 20:10 Asia/Shanghai | Weekly US Growth review. |
 
 Inspect scheduler config:
 
@@ -221,7 +224,7 @@ python3 scripts/run_scheduler.py --run-once cash_anchor_cn_dividend_review
 Execute one job:
 
 ```bash
-python3 scripts/run_scheduler.py --run-once growth_cn_daily_review --execute
+python3 scripts/run_scheduler.py --run-once growth_us_close_review --execute
 ```
 
 Run the scheduler loop:
@@ -247,8 +250,8 @@ Commands work through CLI input and Feishu messages.
 | `/buy`, `/sell`, `/dividend`, `/snapshot` | Maintain local Cash Anchor events and snapshot. |
 | `/sync longbridge` | Generate a read-only Longbridge sync proposal. |
 | `/apply longbridge cash_anchor` | Apply the approved Cash Anchor subset from Longbridge. |
-| `/growth-holdings` | Batch update Growth Engine holdings. |
-| `/growth-watchlist` | Batch update Growth Engine watchlist. |
+| `/growth-universe` | Show the normalized Longbridge-backed Growth Engine universe. |
+| `/sync longbridge growth` | Read Longbridge and build the Growth Engine universe. |
 | `/growth-review NVDA.US` | Review one Growth Engine symbol. |
 | `/growth-snapshot` | Show local Growth Engine holdings and watchlist. |
 | `/absorb <target> <text>` | Generate an audited constitution patch proposal. |

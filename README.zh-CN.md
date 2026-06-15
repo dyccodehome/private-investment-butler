@@ -13,7 +13,7 @@
 | 市场范围 | 只专注 A 股和美股。港股暂不纳入当前维护范围。 |
 | 运行方式 | 本地优先，核心生命周期由 `main.py` 显式控制；不引入 LangGraph 等重型状态机框架。 |
 | 通讯入口 | 飞书长连接接收消息和审批卡片；CLI 用于本地测试。 |
-| 策略岛 | `Cash_Anchor` 负责现金流、防守仓、分红、期权收益和流动性；`Growth_Engine` 负责 A 股成长和美股颠覆性成长。 |
+| 策略岛 | `Cash_Anchor` 负责现金流、防守仓、分红、期权收益和流动性；`Growth_Engine` 只负责长桥来源的美股颠覆性成长。 |
 | 数据接入 | 通过 `configs/tool_registry.yaml` 治理 Skill 披露；LLM 不允许自由调用 shell。 |
 | 交易边界 | 不开放下单、改单、撤单。券商相关能力只读、固定函数、固定命令参数。 |
 | WebUI | 当前不做通用 WebUI。系统保留本地 trace、成本和复盘统计接口。 |
@@ -95,7 +95,7 @@ private_investment_butler/
 | 策略 | 子框架 | 角色 |
 | --- | --- | --- |
 | `Cash_Anchor` | `CN_Dividend_Income`, `US_Income_Options` | 防守端现金流锚点。维护 A 股红利现金流、美股收益资产、期权纪律、流动性和本地账本。 |
-| `Growth_Engine` | `CN_Alpha_Growth`, `US_Disruptive_Growth` | 进攻端成长引擎。维护 A 股成长和美股颠覆性成长的论据、估值、流动性和趋势纪律。 |
+| `Growth_Engine` | `US_Disruptive_Growth` | 进攻端美股成长引擎。标的来自长桥持仓和自选，经现金流标的、期权、杠杆 ETF、指数过滤后进入 universe。 |
 
 每个策略岛维护自己的本地私有状态：
 
@@ -200,11 +200,14 @@ python3 -m src.feishu_long_connection
 
 | 任务 | 市场 | 时间 | 用途 |
 | --- | --- | --- | --- |
-| `growth_cn_daily_review` | CN | 每日 16:30 Asia/Shanghai | A 股成长收盘复盘。 |
-| `cash_anchor_cn_dividend_review` | CN | 每日 18:30 Asia/Shanghai | A 股红利财报和正式公告核验工作流。 |
-| `cash_anchor_us_income_distribution_sync` | US | 每日 07:15 Asia/Shanghai | 美股收益分配同步与复核。 |
-| `growth_us_daily_review` | US | 每日 06:00 Asia/Shanghai | 美股成长收盘复盘。 |
-| `growth_weekly_review` | ALL | 周日 20:00 Asia/Shanghai | 成长框架周复盘。 |
+| `cash_anchor_cn_premarket_review` | CN | 工作日 08:50 Asia/Shanghai | A 股红利开盘计划。 |
+| `cash_anchor_cn_close_review` | CN | 工作日 16:20 Asia/Shanghai | A 股红利收盘复盘。 |
+| `cash_anchor_us_premarket_review` | US | 工作日 08:30 America/New_York | 美股现金流开盘计划。 |
+| `growth_us_premarket_review` | US | 工作日 08:40 America/New_York | 美股成长开盘计划。 |
+| `cash_anchor_us_close_review` | US | 工作日 17:10 America/New_York | 美股现金流收盘复盘。 |
+| `growth_us_close_review` | US | 工作日 17:20 America/New_York | 美股成长收盘复盘。 |
+| `cash_anchor_weekly_review` | ALL | 周日 20:00 Asia/Shanghai | 现金锚点周复盘。 |
+| `growth_weekly_review` | ALL | 周日 20:10 Asia/Shanghai | 美股成长周复盘。 |
 
 查看配置：
 
@@ -221,7 +224,7 @@ python3 scripts/run_scheduler.py --run-once cash_anchor_cn_dividend_review
 真实执行单个任务：
 
 ```bash
-python3 scripts/run_scheduler.py --run-once growth_cn_daily_review --execute
+python3 scripts/run_scheduler.py --run-once growth_us_close_review --execute
 ```
 
 启动常驻 Scheduler：
@@ -247,8 +250,8 @@ python3 scripts/run_scheduler.py --run-loop
 | `/buy`, `/sell`, `/dividend`, `/snapshot` | 维护 Cash Anchor 本地事件和快照。 |
 | `/sync longbridge` | 生成长桥只读同步提案。 |
 | `/apply longbridge cash_anchor` | 确认后应用 Cash Anchor 子集同步。 |
-| `/growth-holdings` | 批量更新 Growth Engine 持仓。 |
-| `/growth-watchlist` | 批量更新 Growth Engine 自选股。 |
+| `/growth-universe` | 查看长桥归一化后的 Growth Engine universe。 |
+| `/sync longbridge growth` | 读取长桥并生成 Growth Engine universe。 |
 | `/growth-review NVDA.US` | 复盘单只 Growth Engine 标的。 |
 | `/growth-snapshot` | 查看 Growth Engine 本地持仓和自选。 |
 | `/absorb <target> <text>` | 生成经过审计的宪法补丁提案。 |

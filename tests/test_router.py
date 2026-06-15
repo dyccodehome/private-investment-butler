@@ -14,10 +14,10 @@ class RouterTest(unittest.TestCase):
         self.assertEqual(state.framework_id, "Cash_Anchor")
         self.assertEqual(state.route_attempts, 1)
 
-    def test_cn_growth_route(self) -> None:
+    def test_non_us_growth_no_longer_routes_to_growth(self) -> None:
         state = route_intent(AgentState(user_input="A股半导体成长股跌破 MA120 怎么处理"))
 
-        self.assertEqual(state.framework_id, "Growth_Engine")
+        self.assertEqual(state.framework_id, "Cash_Anchor")
 
     def test_us_growth_route(self) -> None:
         state = route_intent(AgentState(user_input="美股 AI SaaS 龙头估值怎么看"))

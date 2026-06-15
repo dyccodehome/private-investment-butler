@@ -133,6 +133,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "max_tokens": 30000,
                 "warn_tokens": 24000,
             },
+            "scheduled_review": {
+                "max_tokens": 40000,
+                "warn_tokens": 32000,
+            },
             "knowledge_absorb": {
                 "max_tokens": 40000,
                 "warn_tokens": 32000,

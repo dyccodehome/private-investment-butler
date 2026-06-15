@@ -57,9 +57,13 @@ def _print_jobs(config) -> None:
     print(f"Scheduler enabled={config.enabled} timezone={config.timezone} dry_run_by_default={config.dry_run_by_default}")
     for job in config.jobs:
         weekday = "" if job.weekday is None else f" weekday={job.weekday}"
+        weekdays = "" if job.weekdays is None else f" weekdays={','.join(str(item) for item in job.weekdays)}"
+        offset = "" if job.market_date_offset_days == 0 else f" market_date_offset_days={job.market_date_offset_days}"
+        time_zone = "" if job.time_timezone is None else f" time_timezone={job.time_timezone}"
         print(
             f"- {job.name}: enabled={job.enabled} type={job.job_type} "
-            f"market={job.market} schedule={job.schedule} time={job.run_time.strftime('%H:%M')}{weekday}"
+            f"market={job.market} schedule={job.schedule} time={job.run_time.strftime('%H:%M')}"
+            f"{time_zone}{weekday}{weekdays}{offset}"
         )
 
 

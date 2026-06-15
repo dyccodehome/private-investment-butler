@@ -102,3 +102,5 @@ src/market_data/
 - 2026-06-03：Growth_Engine 单股复盘和每日复盘在调用 LLM 前会补充 `market_data`，A 股走 yfinance，美股走 Longbridge；失败结果保留在上下文中供 LLM 明确说明缺口。
 - 2026-06-03：`portfolio_snapshot` Skill 改为返回 Cash Anchor 增强快照，包含本地账本和只读市场数据，不自动写回 `holdings.csv`。
 - 2026-06-04：新增美股行情 fallback、市场阶段上下文、数据质量摘要、新闻/公告标准 payload、输出契约和决策复盘统计。当前进入真实 Provider 和生产链路复核阶段。
+- 2026-06-07：真实外部源 smoke test 通过：Yahoo Finance A 股行情、Longbridge 美股行情/持仓/自选、AkShare 新闻/公告、SEC filings 和 10 个 scheduler dry-run 均返回 `ok`。
+- 2026-06-07：A 股公告源增加扫描上限，避免多标的自动化复盘被 AkShare 串行请求拖垮；SEC filings 改用 certifi CA context，修复本机证书校验失败。

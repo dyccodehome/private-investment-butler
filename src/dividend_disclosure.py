@@ -11,6 +11,14 @@ from src.market_intel import fetch_filings
 from src.portfolio_ledger import Holding, PortfolioEvent, read_holdings, read_portfolio_events
 
 
+CANDIDATE_TYPE_LABELS = {
+    "financial_report": "财报候选",
+    "profit_distribution": "利润分配候选",
+    "equity_distribution_implementation": "权益分派实施候选",
+    "other": "其他公告候选",
+}
+
+
 @dataclass(frozen=True)
 class DividendHolding:
     """合并后的境内红利持仓。"""
@@ -125,19 +133,51 @@ def format_cn_dividend_disclosure_review(snapshot: dict[str, Any]) -> str:
     ]
     if announcement_results:
         lines.append(f"公告候选：{matched_announcement_count}/{len(announcement_results)} 只持仓返回候选披露。")
+        category_totals = _aggregate_candidate_counts(announcement_results)
+        lines.append(
+            "公告拆分："
+            f"财报候选 {category_totals.get('financial_report', 0)}，"
+            f"利润分配候选 {category_totals.get('profit_distribution', 0)}，"
+            f"权益分派实施候选 {category_totals.get('equity_distribution_implementation', 0)}。"
+        )
         for result in announcement_results[:5]:
             symbol = str(result.get("symbol") or "")
             name = str(result.get("name") or "")
             candidates = result.get("candidates") or []
             if candidates:
-                first = candidates[0]
-                dividend = first.get("cash_dividend_per_share")
-                dividend_text = f"，识别每股现金分红 {dividend}" if dividend is not None else ""
-                lines.append(f"- {symbol} {name}：{first.get('title')}{dividend_text}")
+                counts = result.get("classified_candidate_counts") or {}
+                dividend_values = result.get("recognized_cash_dividend_per_share") or []
+                dividend_text = (
+                    "；可识别每股分红 " + ", ".join(str(value) for value in dividend_values[:3])
+                    if dividend_values
+                    else ""
+                )
+                lines.append(
+                    f"- {symbol} {name}："
+                    f"财报 {counts.get('financial_report', 0)}，"
+                    f"利润分配 {counts.get('profit_distribution', 0)}，"
+                    f"权益分派实施 {counts.get('equity_distribution_implementation', 0)}"
+                    f"{dividend_text}"
+                )
             else:
                 coverage = (result.get("data_quality") or {}).get("coverage") or {}
                 error = str(result.get("error") or "")
                 lines.append(f"- {symbol} {name}：公告候选缺口 {coverage.get('filing', 'missing')} {error[:80]}")
+
+        ledger_suggestions = _collect_ledger_update_suggestions(announcement_results)
+        if ledger_suggestions:
+            lines.append("账本更新建议（需人工确认）：")
+            for suggestion in ledger_suggestions[:6]:
+                if suggestion.get("action") == "record_dividend_cash_event":
+                    lines.append(
+                        f"- {suggestion.get('symbol')}：核验到账后可记录现金分红，"
+                        f"税前估算 {suggestion.get('suggested_gross_amount')} {suggestion.get('currency')}。"
+                    )
+                else:
+                    lines.append(
+                        f"- {suggestion.get('symbol')}：核验后可把每股年分红更新为 "
+                        f"{suggestion.get('suggested_value')} {suggestion.get('currency')}。"
+                    )
 
     if not review_items:
         lines.append("本次没有生成待核验项；若后续披露年报、半年报或权益分派实施公告，再人工核验并更新账本。")
@@ -173,6 +213,7 @@ def fetch_dividend_filing_candidates(
         )
         data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
         candidates = [_normalize_dividend_filing_candidate(row) for row in data.get("items") or [] if isinstance(row, dict)]
+        grouped_candidates = _group_dividend_candidates(candidates)
         results.append(
             {
                 "symbol": item.symbol,
@@ -184,6 +225,18 @@ def fetch_dividend_filing_candidates(
                 "error": payload.get("error") or "",
                 "candidate_count": len(candidates),
                 "candidates": candidates,
+                "classified_candidate_counts": {
+                    candidate_type: len(grouped_candidates.get(candidate_type, []))
+                    for candidate_type in CANDIDATE_TYPE_LABELS
+                },
+                "financial_report_candidates": grouped_candidates.get("financial_report", []),
+                "profit_distribution_candidates": grouped_candidates.get("profit_distribution", []),
+                "equity_distribution_implementation_candidates": grouped_candidates.get(
+                    "equity_distribution_implementation",
+                    [],
+                ),
+                "recognized_cash_dividend_per_share": _recognized_cash_dividend_values(candidates),
+                "ledger_update_suggestions": _build_ledger_update_suggestions(item, candidates),
             }
         )
     return results
@@ -305,17 +358,175 @@ def _normalize_dividend_filing_candidate(row: dict[str, Any]) -> dict[str, Any]:
     summary = str(row.get("summary") or "")
     category = str(row.get("category") or "")
     text = " ".join(item for item in [title, summary, category] if item)
+    candidate_types = classify_dividend_candidate_types(text)
+    primary_type = candidate_types[0]
     return {
         "symbol": row.get("symbol"),
         "name": row.get("name"),
         "title": title,
+        "summary": summary[:240],
         "category": category,
         "published_at": row.get("published_at"),
         "url": row.get("url"),
         "source": row.get("source"),
         "provider": row.get("provider"),
+        "candidate_type": primary_type,
+        "candidate_type_label": CANDIDATE_TYPE_LABELS.get(primary_type, primary_type),
+        "candidate_types": candidate_types,
         "cash_dividend_per_share": parse_cash_dividend_per_share(text),
+        "distribution_dates": parse_distribution_dates(text),
     }
+
+
+def classify_dividend_candidate_types(text: str) -> list[str]:
+    """Classify formal disclosures for the CN dividend review workflow."""
+
+    clean = re.sub(r"\s+", "", text or "")
+    checks = [
+        (
+            "equity_distribution_implementation",
+            ["权益分派实施", "实施公告", "股权登记日", "除权除息", "现金红利发放日", "派息日"],
+        ),
+        (
+            "profit_distribution",
+            ["利润分配", "分红", "现金红利", "10派", "每10股派", "每股派", "派息"],
+        ),
+        (
+            "financial_report",
+            ["年度报告", "年报", "半年度报告", "半年报", "季度报告", "一季报", "三季报", "财务报告", "定期报告"],
+        ),
+    ]
+    result = [candidate_type for candidate_type, tokens in checks if any(token in clean for token in tokens)]
+    return result or ["other"]
+
+
+def parse_distribution_dates(text: str) -> dict[str, str]:
+    """Extract raw distribution dates from implementation announcement text."""
+
+    clean = re.sub(r"\s+", "", text or "")
+    date_pattern = r"([0-9]{4}年[0-9]{1,2}月[0-9]{1,2}日|[0-9]{4}-[0-9]{1,2}-[0-9]{1,2})"
+    patterns = {
+        "record_date": rf"股权登记日[:：]?{date_pattern}",
+        "ex_dividend_date": rf"(?:除权除息日|除息日)[:：]?{date_pattern}",
+        "cash_payment_date": rf"(?:现金红利发放日|红利发放日|派息日)[:：]?{date_pattern}",
+    }
+    result: dict[str, str] = {}
+    for key, pattern in patterns.items():
+        match = re.search(pattern, clean)
+        if match:
+            result[key] = match.group(1)
+    return result
+
+
+def _group_dividend_candidates(candidates: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {candidate_type: [] for candidate_type in CANDIDATE_TYPE_LABELS}
+    for candidate in candidates:
+        candidate_types = candidate.get("candidate_types") if isinstance(candidate.get("candidate_types"), list) else []
+        for candidate_type in candidate_types or [candidate.get("candidate_type") or "other"]:
+            key = str(candidate_type or "other")
+            grouped.setdefault(key, []).append(candidate)
+    return grouped
+
+
+def _recognized_cash_dividend_values(candidates: list[dict[str, Any]]) -> list[float]:
+    values: list[float] = []
+    for candidate in candidates:
+        value = candidate.get("cash_dividend_per_share")
+        if value is None:
+            continue
+        clean = round(float(value), 6)
+        if clean not in values:
+            values.append(clean)
+    return values
+
+
+def _build_ledger_update_suggestions(
+    item: FinancialReportReviewItem,
+    candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    suggestions: list[dict[str, Any]] = []
+    seen: set[tuple[str, float]] = set()
+    for candidate in candidates:
+        value = candidate.get("cash_dividend_per_share")
+        if value is None:
+            continue
+        amount_per_share = round(float(value), 6)
+        candidate_types = {
+            str(candidate_type)
+            for candidate_type in candidate.get("candidate_types", [])
+            if str(candidate_type)
+        }
+        if not candidate_types:
+            candidate_types = {str(candidate.get("candidate_type") or "other")}
+        if candidate_types & {"profit_distribution", "financial_report"}:
+            key = ("update_holding_annual_dividend_per_share", amount_per_share)
+            if key not in seen:
+                seen.add(key)
+                suggestions.append(
+                    {
+                        "action": "update_holding_annual_dividend_per_share",
+                        "symbol": item.symbol,
+                        "field": "annual_dividend_per_share",
+                        "current_value": item.current_annual_dividend_per_share,
+                        "suggested_value": amount_per_share,
+                        "currency": "CNY",
+                        "source_title": candidate.get("title") or "",
+                        "source_url": candidate.get("url") or "",
+                        "confirmation_required": True,
+                        "reason": "候选公告可识别每股现金分红，需人工核验正式披露后再更新持仓账本。",
+                        "command_hint": f"/holding {item.symbol} <shares> <cost_price> dividend={amount_per_share}",
+                    }
+                )
+        if "equity_distribution_implementation" in candidate_types:
+            gross_amount = round(item.shares * amount_per_share, 2)
+            key = ("record_dividend_cash_event", amount_per_share)
+            if key not in seen:
+                seen.add(key)
+                distribution_dates = (
+                    candidate.get("distribution_dates")
+                    if isinstance(candidate.get("distribution_dates"), dict)
+                    else {}
+                )
+                cash_payment_date = str(distribution_dates.get("cash_payment_date") or "<到账日>")
+                suggestions.append(
+                    {
+                        "action": "record_dividend_cash_event",
+                        "symbol": item.symbol,
+                        "field": "portfolio_events",
+                        "shares": item.shares,
+                        "cash_dividend_per_share": amount_per_share,
+                        "suggested_gross_amount": gross_amount,
+                        "currency": "CNY",
+                        "cash_payment_date": cash_payment_date,
+                        "source_title": candidate.get("title") or "",
+                        "source_url": candidate.get("url") or "",
+                        "confirmation_required": True,
+                        "reason": "权益分派实施候选可估算税前到账金额，需与券商流水和税费确认后再入账。",
+                        "command_hint": (
+                            f"/dividend symbol={item.symbol} amount={gross_amount} "
+                            f"date={cash_payment_date} notes=权益分派实施公告人工确认"
+                        ),
+                    }
+                )
+    return suggestions[:5]
+
+
+def _aggregate_candidate_counts(results: list[dict[str, Any]]) -> dict[str, int]:
+    totals = {candidate_type: 0 for candidate_type in CANDIDATE_TYPE_LABELS}
+    for result in results:
+        counts = result.get("classified_candidate_counts") if isinstance(result.get("classified_candidate_counts"), dict) else {}
+        for candidate_type in totals:
+            totals[candidate_type] += int(counts.get(candidate_type) or 0)
+    return totals
+
+
+def _collect_ledger_update_suggestions(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    suggestions: list[dict[str, Any]] = []
+    for result in results:
+        for suggestion in result.get("ledger_update_suggestions") or []:
+            if isinstance(suggestion, dict):
+                suggestions.append(suggestion)
+    return suggestions
 
 
 def _announcement_provider_status(results: list[dict[str, Any]]) -> str:

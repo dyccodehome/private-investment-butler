@@ -1,6 +1,6 @@
 # 私人投资管家待办清单
 
-最后更新：2026-06-04
+最后更新：2026-06-07
 
 这个文件用于跟踪当前 Agent 从工程原型走向稳定日常使用还需要完成的事项。
 
@@ -24,7 +24,7 @@
 - [x] 飞书基础运行时代码已具备：普通文本、Slash command、补丁卡片、审计拒绝卡片、会话锁和事件去重均已有实现或单元测试。
 - [x] 完整离线测试通过：`python3 -m unittest discover` 当前为 107 个测试通过。
 - [~] 真实飞书生产 smoke test 已部分完成：长连接启动和主动推送已通过；消息接收、按钮回调和定时任务真实执行推送仍需人工配合验证。
-- [ ] 仍需真实 Provider smoke test：DeepSeek 模型名、Yahoo Finance A 股数据、Longbridge CLI、AkShare 新闻/公告和 SEC filings。
+- [~] 真实 Provider smoke test 已完成外部数据源部分：Yahoo Finance A 股、Longbridge CLI、AkShare 新闻/公告和 SEC filings 均通过；DeepSeek 真实模型调用仍需单独确认。
 - [ ] 仍需把 Roadmap 中旧需求文档继续归档或改状态，避免 active 目录保留已完成阶段的历史文档。
 
 ## 已完成事项
@@ -48,7 +48,7 @@
 - [x] 移除知识吸收“观察池”动作，改为“继续讨论 / 同意 / 拒绝”的人工复核流程。
 - [x] 知识吸收讨论中每轮调用 LLM，使用原始提案、目标宪法、审计意见、完整讨论日志和最新用户回复。
 - [x] 新增 Growth_Engine 本地成长持仓/自选文件、单股 `/growth-review` 命令和每日复盘脚本入口。
-- [x] 新增 Growth_Engine 批量写入命令 `/growth-holdings` 和 `/growth-watchlist`，移除单条成长股写入命令入口。
+- [x] 停用 Growth_Engine 手工写入命令，改为长桥 universe 作为正式标的来源。
 - [x] 清理单条成长股写入命令删除后遗留的无用格式化函数。
 - [x] 在 README 中补充项目文件职责分类。
 - [x] 新增 `FEISHU_DEFAULT_CHAT_ID`，成长股每日复盘脚本可默认推送到固定飞书会话，`--chat-id` 可临时覆盖。
@@ -199,7 +199,7 @@
   - [x] 确认运行方式：本机常驻。
 - [x] 新增 `src/scheduler/`。
 - [x] 新增 `scripts/run_scheduler.py`。
-- [x] 将 Growth CN / US 每日复盘接入 Scheduler。
+- [x] 将 Growth US 开盘前、收盘后和周复盘接入 Scheduler。
 - [x] 将 Growth 周复盘接入 Scheduler。
 - [x] 将定时复盘结果推送到 `FEISHU_DEFAULT_CHAT_ID`。
 - [x] Scheduler 默认禁用常驻执行，并默认 dry-run，避免未确认前误调用 LLM。
