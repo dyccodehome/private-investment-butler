@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from src.command_registry import handle_command, help_text, resolve_command
@@ -38,6 +39,7 @@ class CommandRegistryTest(unittest.TestCase):
         self.assertIn("/dossier-refresh", text)
         self.assertIn("/review-dossier", text)
         self.assertIn("/scheduled-review", text)
+        self.assertIn("/scheduled-health", text)
         self.assertIn("Cash_Anchor/CN_Dividend_Income", text)
         self.assertIn("Cash_Anchor/US_Income_Options", text)
         self.assertIn("Growth_Engine/US_Disruptive_Growth", text)
@@ -348,6 +350,30 @@ class CommandRegistryTest(unittest.TestCase):
         self.assertEqual(reply, "正式结果")
         self.assertFalse(run_job_once.call_args.kwargs["dry_run"])
         self.assertTrue(run_job_once.call_args.kwargs["send_result"] is False)
+
+    @patch("src.scheduled_health.format_scheduled_health")
+    @patch("src.scheduled_health.summarize_scheduled_health")
+    @patch("src.scheduler.config.load_scheduler_config")
+    def test_scheduled_health_command_summarizes_runs_and_reports(
+        self,
+        load_scheduler_config,
+        summarize_scheduled_health,
+        format_scheduled_health,
+    ) -> None:
+        load_scheduler_config.return_value = SimpleNamespace(
+            jobs=[
+                SimpleNamespace(name="growth_us_close_review", enabled=True),
+                SimpleNamespace(name="growth_cn_close_review", enabled=False),
+            ]
+        )
+        summarize_scheduled_health.return_value = {"status": "ok"}
+        format_scheduled_health.return_value = "健康检查结果"
+
+        reply = handle_command("/scheduled-health limit=3", "cli")
+
+        self.assertEqual(reply, "健康检查结果")
+        summarize_scheduled_health.assert_called_once_with(current_job_names={"growth_us_close_review"})
+        format_scheduled_health.assert_called_once_with({"status": "ok"}, limit=3)
 
     @patch("src.growth_universe.sync_growth_universe")
     def test_growth_universe_command_uses_provider(self, sync_universe) -> None:

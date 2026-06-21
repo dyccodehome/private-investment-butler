@@ -135,6 +135,13 @@ COMMAND_REGISTRY: list[CommandDef] = [
         aliases=("schedule-run",),
         args_hint="<job_name> [execute=true]",
     ),
+    CommandDef(
+        "scheduled-health",
+        "汇总定时任务运行日志和报告质量",
+        "Ops",
+        aliases=("schedule-health", "health-scheduled"),
+        args_hint="[limit=<n>]",
+    ),
 ]
 
 
@@ -189,6 +196,7 @@ def handle_command(raw_text: str, chat_id: str) -> str | None:
         "dossier-refresh": _handle_dossier_refresh,
         "review-dossier": _handle_review_dossier,
         "scheduled-review": _handle_scheduled_review,
+        "scheduled-health": _handle_scheduled_health,
     }
     handler = handlers.get(command.name)
     if not handler:
@@ -236,6 +244,7 @@ def help_text() -> str:
         "/dossier-refresh framework=<Cash_Anchor|Growth_Engine> symbol=<code> [market=CN|US] - 刷新个股研究档案事实证据",
         "/review-dossier framework=<Cash_Anchor|Growth_Engine> symbol=<code> [market=CN|US] - 生成研究档案更新建议，不自动写入",
         "/scheduled-review <job_name> [execute=true] - 手动试运行或执行定时工作流",
+        "/scheduled-health [limit=<n>] - 汇总定时任务运行日志和报告质量",
         "",
         "可用 target_id：",
         "- Cash_Anchor：现金流总框架，共同逻辑、资金池边界、总现金流目标",
@@ -830,6 +839,18 @@ def _handle_scheduled_review(args: str, chat_id: str) -> str:
     if job is None:
         return f"未知任务：{job_name}\n可发送 /scheduled-review 查看已启用任务。"
     return run_job_once(job, chat_id=chat_id, dry_run=not execute, send_result=False)
+
+
+def _handle_scheduled_health(args: str, chat_id: str) -> str:
+    from src.scheduled_health import format_scheduled_health, summarize_scheduled_health
+    from src.scheduler.config import load_scheduler_config
+
+    parsed = _parse_key_values(args)
+    limit = _optional_int(parsed.get("limit")) or 8
+    config = load_scheduler_config()
+    current_job_names = {job.name for job in config.jobs if job.enabled}
+    summary = summarize_scheduled_health(current_job_names=current_job_names)
+    return format_scheduled_health(summary, limit=limit)
 
 
 def _parse_key_values(args: str) -> dict[str, str]:
