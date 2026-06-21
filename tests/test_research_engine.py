@@ -74,6 +74,19 @@ class ResearchEngineTest(unittest.TestCase):
                     },
                 }
             },
+            fundamental_data={
+                "symbol_data": {
+                    "NVDA.US": {
+                        "company_name": "NVIDIA",
+                        "industry": "Semiconductors",
+                        "valuation_desc": "current P/E in reasonable range",
+                        "valuation_metrics": {"metrics": {"pe": {"desc": "current P/E in reasonable range"}}},
+                        "financial_report_snapshot": {"summary": "data center growth beats expectations"},
+                        "forecast_eps": {"items": [{"forecast_eps_mean": "3.04"}]},
+                        "consensus": {"list": [{"details": [{"key": "revenue", "estimate": "100"}]}]},
+                    }
+                }
+            },
             as_of=date(2026, 6, 16),
             fetch_missing_context=False,
         )
@@ -86,6 +99,8 @@ class ResearchEngineTest(unittest.TestCase):
         self.assertEqual(signals["NVDA.US"]["valuation_view"], "above_ma120")
         self.assertEqual(report["market_context_summary"]["symbols_with_ma120"], 1)
         self.assertEqual(report["market_context_summary"]["symbols_with_longbridge_market_snapshot"], 1)
+        self.assertEqual(report["fundamental_context_summary"]["symbols_with_valuation"], 1)
+        self.assertTrue(any("长桥估值摘要" in item for item in signals["NVDA.US"]["evidence"]))
         self.assertTrue(report["theme_radar"])
         queue = {item["ticker"]: item for item in report["deep_research_queue"]}
         self.assertEqual(queue["NET.US"]["suggested_action"], "create_dossier")

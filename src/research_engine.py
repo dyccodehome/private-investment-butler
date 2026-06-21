@@ -184,6 +184,7 @@ def build_growth_research_report(
     symbol_intel: dict[str, Any] | None = None,
     research_dossiers: dict[str, Any] | None = None,
     market_data: dict[str, Any] | None = None,
+    fundamental_data: dict[str, Any] | None = None,
     as_of: date | None = None,
     max_symbols: int = MAX_RESEARCH_SYMBOLS,
     fetch_missing_context: bool = True,
@@ -201,6 +202,7 @@ def build_growth_research_report(
     intel = symbol_intel if symbol_intel is not None else {}
     dossiers = research_dossiers if research_dossiers is not None else {}
     market = market_data if market_data is not None else {}
+    fundamentals = fundamental_data if fundamental_data is not None else {}
 
     if fetch_missing_context:
         if symbol_intel is None:
@@ -214,6 +216,7 @@ def build_growth_research_report(
             intel_payload=intel.get(_symbol(item)) or {},
             dossier_payload=dossiers.get(_symbol(item)) or {},
             market_payload=market.get(_symbol(item)) or {},
+            fundamental_payload=_fundamental_payload(fundamentals, _symbol(item)),
         )
         for item in items
     ]
@@ -222,6 +225,7 @@ def build_growth_research_report(
     deep_research_queue = _build_deep_research_queue(signals, dossiers)
     data_gaps = _data_gaps(payload, items, intel, dossiers)
     market_context_summary = _market_context_summary(market)
+    fundamental_context_summary = _fundamental_context_summary(fundamentals)
 
     return {
         "schema_version": 1,
@@ -237,6 +241,7 @@ def build_growth_research_report(
         "research_signals": [asdict(item) for item in signals],
         "deep_research_queue": [asdict(item) for item in deep_research_queue],
         "market_context_summary": market_context_summary,
+        "fundamental_context_summary": fundamental_context_summary,
         "data_quality": {
             "status": "has_gaps" if data_gaps else "ok",
             "limitations": data_gaps,
@@ -357,17 +362,19 @@ def _build_signal(
     intel_payload: dict[str, Any],
     dossier_payload: dict[str, Any],
     market_payload: dict[str, Any],
+    fundamental_payload: dict[str, Any],
 ) -> ResearchSignal:
     symbol = _symbol(item)
     name = str(item.get("name") or "").strip()
-    combined_text = _combined_text(item, intel_payload, dossier_payload)
+    combined_text = _combined_text(item, intel_payload, dossier_payload, fundamental_payload)
     theme_rule, theme_score = _classify_theme(combined_text)
     positive_score = _term_score(combined_text, POSITIVE_TERMS)
     negative_score = _term_score(combined_text, NEGATIVE_TERMS)
     intel_count = len(_intel_items(intel_payload))
+    fundamental_count = _fundamental_signal_count(fundamental_payload)
     dossier_exists = bool(dossier_payload.get("exists"))
     dossier_stale = bool((dossier_payload.get("freshness") or {}).get("stale"))
-    evidence_strength = _evidence_strength(dossier_exists, dossier_stale, intel_count, theme_score)
+    evidence_strength = _evidence_strength(dossier_exists, dossier_stale, intel_count + fundamental_count, theme_score)
     thesis_impact = _thesis_impact(positive_score, negative_score, dossier_stale, intel_count)
     valuation_view = _valuation_view(market_payload, item)
     risk_level = _risk_level(item, negative_score, dossier_payload, evidence_strength)
@@ -379,7 +386,7 @@ def _build_signal(
         evidence_strength=evidence_strength,
         risk_level=risk_level,
     )
-    evidence = _evidence_lines(item, intel_payload, dossier_payload, positive_score, negative_score)
+    evidence = _evidence_lines(item, intel_payload, dossier_payload, fundamental_payload, positive_score, negative_score)
     next_validation = _next_validation(theme_rule, dossier_payload)
 
     return ResearchSignal(
@@ -565,7 +572,38 @@ def _market_context_summary(market_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _combined_text(item: dict[str, Any], intel_payload: dict[str, Any], dossier_payload: dict[str, Any]) -> str:
+def _fundamental_context_summary(fundamental_data: dict[str, Any]) -> dict[str, Any]:
+    symbol_data = fundamental_data.get("symbol_data") if isinstance(fundamental_data.get("symbol_data"), dict) else {}
+    return {
+        "symbols_with_fundamental_data": len(symbol_data),
+        "symbols_with_company_profile": sum(1 for item in symbol_data.values() if isinstance(item, dict) and item.get("company_name")),
+        "symbols_with_valuation": sum(1 for item in symbol_data.values() if isinstance(item, dict) and item.get("valuation_metrics")),
+        "symbols_with_consensus": sum(1 for item in symbol_data.values() if isinstance(item, dict) and item.get("consensus")),
+        "symbols_with_forecast_eps": sum(1 for item in symbol_data.values() if isinstance(item, dict) and item.get("forecast_eps")),
+        "symbols_with_dividend_history": sum(1 for item in symbol_data.values() if isinstance(item, dict) and item.get("dividend_count")),
+    }
+
+
+def _fundamental_payload(fundamental_data: dict[str, Any], symbol: str) -> dict[str, Any]:
+    symbol_data = fundamental_data.get("symbol_data") if isinstance(fundamental_data.get("symbol_data"), dict) else {}
+    payload = symbol_data.get(symbol) if isinstance(symbol_data, dict) else None
+    return payload if isinstance(payload, dict) else {}
+
+
+def _fundamental_signal_count(payload: dict[str, Any]) -> int:
+    score = 0
+    for key in ("company_name", "valuation_desc", "financial_report_snapshot", "forecast_eps", "consensus"):
+        if payload.get(key):
+            score += 1
+    return score
+
+
+def _combined_text(
+    item: dict[str, Any],
+    intel_payload: dict[str, Any],
+    dossier_payload: dict[str, Any],
+    fundamental_payload: dict[str, Any],
+) -> str:
     parts = [
         str(item.get("symbol") or ""),
         str(item.get("name") or ""),
@@ -576,6 +614,12 @@ def _combined_text(item: dict[str, Any], intel_payload: dict[str, Any], dossier_
         " ".join(str(value) for value in dossier_payload.get("bullish_case") or []),
         " ".join(str(value) for value in dossier_payload.get("bearish_case") or []),
         " ".join(str(value) for value in dossier_payload.get("risk_points") or []),
+        str(fundamental_payload.get("company_name") or ""),
+        str(fundamental_payload.get("industry") or ""),
+        str(fundamental_payload.get("valuation_desc") or ""),
+        _jsonish_text(fundamental_payload.get("financial_report_snapshot")),
+        _jsonish_text(fundamental_payload.get("forecast_eps")),
+        _jsonish_text(fundamental_payload.get("consensus")),
     ]
     for row in _intel_items(intel_payload):
         parts.extend([str(row.get("title") or row.get("text") or ""), str(row.get("summary") or "")])
@@ -695,6 +739,7 @@ def _evidence_lines(
     item: dict[str, Any],
     intel_payload: dict[str, Any],
     dossier_payload: dict[str, Any],
+    fundamental_payload: dict[str, Any],
     positive_score: int,
     negative_score: int,
 ) -> list[str]:
@@ -711,11 +756,26 @@ def _evidence_lines(
         lines.append(f"正向关键词命中 {positive_score}。")
     if negative_score:
         lines.append(f"负向/风险关键词命中 {negative_score}。")
+    valuation_desc = str(fundamental_payload.get("valuation_desc") or "").strip()
+    if valuation_desc:
+        lines.append(f"长桥估值摘要：{valuation_desc[:120]}")
+    if fundamental_payload.get("financial_report_snapshot"):
+        lines.append("长桥已返回财报速览/财务摘要。")
+    if fundamental_payload.get("consensus") or fundamental_payload.get("forecast_eps"):
+        lines.append("长桥已返回分析师预测或一致预期。")
     for row in _intel_items(intel_payload)[:2]:
         title = str(row.get("title") or row.get("text") or "").strip()
         if title:
             lines.append(f"资讯：{title[:120]}")
     return _dedupe(lines)[:MAX_EVIDENCE_ITEMS]
+
+
+def _jsonish_text(value: Any) -> str:
+    if value in (None, "", [], {}):
+        return ""
+    if isinstance(value, (list, dict)):
+        return str(value)[:2000]
+    return str(value)
 
 
 def _next_validation(rule: ThemeRule, dossier_payload: dict[str, Any]) -> list[str]:

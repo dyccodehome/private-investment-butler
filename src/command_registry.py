@@ -128,6 +128,13 @@ COMMAND_REGISTRY: list[CommandDef] = [
         aliases=("lb-market",),
         args_hint="symbol=<code>[,<code>] [market=US] [kline_limit=6] [timeout=<seconds>]",
     ),
+    CommandDef(
+        "longbridge-fundamental",
+        "读取长桥公司概况、估值、财报、预测和分红只读快照",
+        "Ledger",
+        aliases=("lb-fundamental", "lb-fund"),
+        args_hint="symbol=<code>[,<code>] [market=US] [limit=6] [timeout=<seconds>]",
+    ),
     CommandDef("apply", "确认并写入外部同步结果；当前支持 longbridge cash_anchor", "Ledger", args_hint="longbridge cash_anchor"),
     CommandDef(
         "absorb",
@@ -215,6 +222,7 @@ def handle_command(raw_text: str, chat_id: str) -> str | None:
         "longbridge-health": _handle_longbridge_health,
         "longbridge-account": _handle_longbridge_account,
         "longbridge-market": _handle_longbridge_market,
+        "longbridge-fundamental": _handle_longbridge_fundamental,
         "apply": _handle_apply,
         "absorb": _handle_absorb,
         "dossier-refresh": _handle_dossier_refresh,
@@ -259,6 +267,7 @@ def help_text() -> str:
         "/longbridge-health [cli=false] [network=false] [timeout=<seconds>] - 检查长桥只读接入健康状态",
         "/longbridge-account [days=<n>] [symbol=<code>] [currency=USD] [profit=true] - 读取长桥账户和成交只读快照",
         "/longbridge-market symbol=NVDA.US,MSFT.US [market=US] [kline_limit=6] - 读取长桥行情和市场状态只读快照",
+        "/longbridge-fundamental symbol=NVDA.US,MSFT.US [limit=6] - 读取长桥基本面只读快照",
         "/apply longbridge cash_anchor - 确认后把长桥 QQQI/XQQI/TQQQ 写入 Cash Anchor 账本",
         "",
         "Growth Engine：",
@@ -848,6 +857,32 @@ def _handle_longbridge_market(args: str, chat_id: str) -> str:
     except (RuntimeError, ValueError) as exc:
         return str(exc)
     return format_market_context_snapshot(snapshot)
+
+
+def _handle_longbridge_fundamental(args: str, chat_id: str) -> str:
+    from src.longbridge_fundamental_provider import (
+        build_fundamental_context_snapshot,
+        format_fundamental_context_snapshot,
+    )
+
+    parsed = _parse_key_values(args)
+    symbols = _parse_symbol_list(parsed.get("symbol") or parsed.get("symbols") or args)
+    if not symbols:
+        return "请提供 symbol，例如：/longbridge-fundamental symbol=NVDA.US,MSFT.US market=US"
+    timeout = _optional_int(parsed.get("timeout")) or 15
+    limit = _optional_int(parsed.get("limit") or parsed.get("symbol_limit")) or 6
+    include_dividends = str(parsed.get("dividends") or "true").lower() not in {"0", "false", "no", "n"}
+    try:
+        snapshot = build_fundamental_context_snapshot(
+            symbols=symbols,
+            market=parsed.get("market") or "US",
+            symbol_limit=limit,
+            include_dividends=include_dividends,
+            timeout_seconds=timeout,
+        )
+    except (RuntimeError, ValueError) as exc:
+        return str(exc)
+    return format_fundamental_context_snapshot(snapshot)
 
 
 def _handle_research_radar(args: str, chat_id: str) -> str:

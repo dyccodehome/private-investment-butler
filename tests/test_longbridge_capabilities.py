@@ -36,6 +36,24 @@ class LongbridgeCapabilitiesTest(unittest.TestCase):
         capability = assert_longbridge_command_allowed(["longbridge", "market-temp", "US", "--format", "json"])
         self.assertEqual(capability.capability_id, "market_temperature")
 
+        capability = assert_longbridge_command_allowed(["longbridge", "company", "NVDA.US", "--format", "json"])
+        self.assertEqual(capability.capability_id, "company_profile")
+
+        capability = assert_longbridge_command_allowed(["longbridge", "valuation", "NVDA.US", "--format", "json"])
+        self.assertEqual(capability.capability_id, "valuation")
+
+        capability = assert_longbridge_command_allowed(["longbridge", "financial-report", "snapshot", "NVDA.US", "--format", "json"])
+        self.assertEqual(capability.capability_id, "financial_report")
+
+        capability = assert_longbridge_command_allowed(["longbridge", "forecast-eps", "NVDA.US", "--format", "json"])
+        self.assertEqual(capability.capability_id, "forecast_eps")
+
+        capability = assert_longbridge_command_allowed(["longbridge", "consensus", "NVDA.US", "--format", "json"])
+        self.assertEqual(capability.capability_id, "consensus")
+
+        capability = assert_longbridge_command_allowed(["longbridge", "finance-calendar", "report", "--format", "json"])
+        self.assertEqual(capability.capability_id, "finance_calendar")
+
     def test_denies_trading_write_commands(self) -> None:
         with self.assertRaises(PermissionError):
             assert_longbridge_command_allowed(["longbridge", "submit-order", "NVDA.US"])
@@ -53,6 +71,7 @@ class LongbridgeCapabilitiesTest(unittest.TestCase):
     def test_read_capability_requires_implemented_provider_by_default(self) -> None:
         self.assertEqual(assert_read_capability("positions").capability_id, "positions")
         self.assertEqual(assert_read_capability("candles").capability_id, "candles")
+        self.assertEqual(assert_read_capability("valuation").capability_id, "valuation")
         with self.assertRaises(PermissionError):
             assert_read_capability("fundamentals")
         self.assertEqual(assert_read_capability("fundamentals", require_implemented=False).capability_id, "fundamentals")
