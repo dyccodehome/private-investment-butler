@@ -61,7 +61,10 @@ class ScheduledReviewTest(unittest.TestCase):
                 "src.market_intel.fetch_company_news"
             ) as fetch_news, patch("src.market_intel.fetch_company_announcements") as fetch_announcements, patch(
                 "src.research_dossier.build_research_dossier_snapshot"
-            ) as dossier_snapshot:
+            ) as dossier_snapshot, patch(
+                "src.longbridge_account_provider.build_account_activity_snapshot"
+            ) as account_snapshot:
+                account_snapshot.return_value = _account_activity()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-04",
                     "market_filter": "US",
@@ -139,6 +142,7 @@ class ScheduledReviewTest(unittest.TestCase):
         self.assertIn("market_data", context)
         self.assertIn("symbol_intel", context)
         self.assertIn("research_dossiers", context)
+        self.assertEqual(context["account_activity"]["summary"]["execution_count"], 1)
         self.assertEqual(context["research_engine"]["engine"], "growth_research_mvp")
         self.assertEqual(context["research_engine"]["research_signals"][0]["ticker"], "NVDA.US")
         self.assertEqual(context["operation_framework"]["engine"], "operation_framework")
@@ -154,7 +158,10 @@ class ScheduledReviewTest(unittest.TestCase):
                 "src.market_intel.fetch_company_news"
             ) as fetch_news, patch(
                 "src.market_intel.fetch_company_announcements"
-            ) as fetch_announcements, patch("src.research_dossier.build_research_dossier_snapshot") as dossier_snapshot:
+            ) as fetch_announcements, patch("src.research_dossier.build_research_dossier_snapshot") as dossier_snapshot, patch(
+                "src.longbridge_account_provider.build_account_activity_snapshot"
+            ) as account_snapshot:
+                account_snapshot.return_value = _account_activity()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-07",
                     "market_filter": "US",
@@ -206,6 +213,7 @@ class ScheduledReviewTest(unittest.TestCase):
         self.assertEqual(context["record_counts"]["total"], 1)
         self.assertIn("本周日报", context["daily_records"][0]["result"])
         self.assertEqual(context["tracked_symbols"][0]["symbol"], "NVDA.US")
+        self.assertIn("US", context["account_activity_by_market"])
         self.assertEqual(context["research_engine"]["engine"], "growth_research_mvp")
         self.assertEqual(context["operation_framework"]["engine"], "operation_framework")
 
@@ -219,7 +227,10 @@ class ScheduledReviewTest(unittest.TestCase):
                 "src.market_data.provider_router.fetch_quote"
             ) as fetch_quote, patch("src.market_intel.fetch_company_news") as fetch_news, patch(
                 "src.market_intel.fetch_company_announcements"
-            ) as fetch_announcements, patch("src.research_dossier.build_research_dossier_snapshot") as dossier_snapshot:
+            ) as fetch_announcements, patch("src.research_dossier.build_research_dossier_snapshot") as dossier_snapshot, patch(
+                "src.longbridge_account_provider.build_account_activity_snapshot"
+            ) as account_snapshot:
+                account_snapshot.return_value = _account_activity()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-04",
                     "market_filter": "US",
@@ -283,6 +294,7 @@ class ScheduledReviewTest(unittest.TestCase):
         self.assertEqual(context["tracked_symbols"][1]["symbol"], "AVGO.US")
         self.assertEqual(context["tracked_symbols"][1]["source"], "longbridge_growth_universe")
         self.assertEqual(context["snapshot"]["summary"]["longbridge_growth_universe_count"], 2)
+        self.assertEqual(context["snapshot"]["summary"]["longbridge_recent_execution_count"], 1)
 
     def test_missing_research_dossier_is_optional_note_not_data_gap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -296,7 +308,10 @@ class ScheduledReviewTest(unittest.TestCase):
                 "src.market_intel.fetch_company_news"
             ) as fetch_news, patch("src.market_intel.fetch_company_announcements") as fetch_announcements, patch(
                 "src.research_dossier.build_research_dossier_snapshot"
-            ) as dossier_snapshot:
+            ) as dossier_snapshot, patch(
+                "src.longbridge_account_provider.build_account_activity_snapshot"
+            ) as account_snapshot:
+                account_snapshot.return_value = _account_activity()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-04",
                     "market_filter": "US",
@@ -346,6 +361,69 @@ class ScheduledReviewTest(unittest.TestCase):
         self.assertFalse(any("未建立研究档案" in item for item in context["data_gaps"]))
         self.assertTrue(any("未建立研究档案" in item for item in context["optional_data_notes"]))
 
+    def test_longbridge_account_failure_is_data_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "frameworks"
+            _write_strategy_files(root)
+            with patch.object(scheduled_review, "FRAMEWORKS_DIR", root), patch(
+                "src.growth_portfolio.build_growth_snapshot"
+            ) as build_snapshot, patch("src.growth_universe.sync_growth_universe") as sync_universe, patch(
+                "src.market_data.provider_router.fetch_quote"
+            ) as fetch_quote, patch("src.market_intel.fetch_company_news") as fetch_news, patch(
+                "src.market_intel.fetch_company_announcements"
+            ) as fetch_announcements, patch("src.research_dossier.build_research_dossier_snapshot") as dossier_snapshot, patch(
+                "src.longbridge_account_provider.build_account_activity_snapshot"
+            ) as account_snapshot:
+                build_snapshot.return_value = {
+                    "as_of": "2026-06-04",
+                    "market_filter": "US",
+                    "missing_files": [],
+                    "summary": {"holding_count": 0, "watchlist_count": 0},
+                    "holdings": [],
+                    "watchlist": [],
+                }
+                sync_universe.return_value = {
+                    "classification_rule": "longbridge universe",
+                    "write_policy": "read_only_context",
+                    "universe": [
+                        {
+                            "symbol": "NVDA.US",
+                            "name": "NVIDIA",
+                            "market": "US",
+                            "has_position": True,
+                            "reason": "AI",
+                        }
+                    ],
+                    "summary": {"universe_count": 1, "excluded_count": 0},
+                }
+                account_snapshot.side_effect = RuntimeError("account query failed")
+                fetch_quote.return_value.to_dict.return_value = {
+                    "status": "ok",
+                    "source": "mock",
+                    "market": "US",
+                    "symbol": "NVDA.US",
+                    "data": {},
+                    "error": "",
+                }
+                fetch_news.return_value = _intel("news", "新闻")
+                fetch_announcements.return_value = _intel("announcement", "公告")
+                dossier_snapshot.return_value = {
+                    "exists": False,
+                    "path": "dossier.json",
+                    "freshness": {"stale": False},
+                    "dossier": {},
+                }
+
+                context = scheduled_review.build_daily_review_context(
+                    framework_id="Growth_Engine",
+                    market="US",
+                    workflow_type="premarket",
+                    as_of=date(2026, 6, 4),
+                )
+
+        self.assertEqual(context["account_activity"], {})
+        self.assertTrue(any("长桥账户/成交只读快照读取失败" in item for item in context["data_gaps"]))
+
     def test_run_scheduled_close_review_persists_llm_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "frameworks"
@@ -360,7 +438,10 @@ class ScheduledReviewTest(unittest.TestCase):
                 "src.market_intel.fetch_company_news"
             ) as fetch_news, patch("src.market_intel.fetch_company_announcements") as fetch_announcements, patch(
                 "src.research_dossier.build_research_dossier_snapshot"
-            ) as dossier_snapshot, patch("src.scheduled_review.LLMClient") as client_cls:
+            ) as dossier_snapshot, patch("src.longbridge_account_provider.build_account_activity_snapshot") as account_snapshot, patch(
+                "src.scheduled_review.LLMClient"
+            ) as client_cls:
+                account_snapshot.return_value = _account_activity()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-04",
                     "market_filter": "US",
@@ -419,6 +500,35 @@ def _context() -> dict:
         "tracked_symbols": [{"symbol": "NVDA.US", "market": "US"}],
         "data_gaps": [],
         "snapshot": {"data_files": {}},
+    }
+
+
+def _account_activity(status: str = "ok") -> dict:
+    return {
+        "source": "longbridge_cli",
+        "scope": "account_activity_snapshot",
+        "as_of": "2026-06-04T08:00:00",
+        "status": status,
+        "period": {"start": "2026-05-28", "end": "2026-06-04", "days": 7},
+        "currency": "USD",
+        "summary": {
+            "cash_info_count": 1,
+            "holding_count": 2,
+            "order_count": 1,
+            "execution_count": 1,
+        },
+        "sections": {
+            "order_history": {
+                "summary": {"order_count": 1},
+                "data": [{"order_id": "o1", "symbol": "NVDA.US"}],
+            },
+            "execution_history": {
+                "summary": {"execution_count": 1},
+                "data": [{"trade_id": "t1", "symbol": "NVDA.US"}],
+            },
+        },
+        "data_quality": {"source_chain": [], "limitations": []},
+        "write_policy": "read_only_account_data; no order placement, amendment, or cancellation",
     }
 
 

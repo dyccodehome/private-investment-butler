@@ -255,6 +255,7 @@ def build_daily_review_context(
     clean_workflow = _validate_workflow_type(workflow_type, allow_weekly=False)
     target_date = as_of or date.today()
     snapshot = _build_framework_snapshot(clean_framework, clean_market, target_date)
+    account_activity = _account_activity_from_snapshot(snapshot)
     tracked = _tracked_symbols_from_snapshot(clean_framework, snapshot)
     previous_close = read_recent_daily_reviews(
         clean_framework,
@@ -307,6 +308,7 @@ def build_daily_review_context(
         "context_bundle_id": _context_bundle(clean_framework, clean_market),
         "strategy_context": _load_strategy_context(clean_framework, clean_market),
         "snapshot": snapshot,
+        "account_activity": account_activity,
         "tracked_symbols": [asdict(item) for item in tracked],
         "context_symbol_limit": MAX_CONTEXT_SYMBOLS,
         "market_data": market_data,
@@ -334,10 +336,12 @@ def build_weekly_review_context(*, framework_id: str, as_of: date | None = None)
     daily_records = read_daily_reviews_between(clean_framework, start_date, target_date)
     us_snapshot = _build_framework_snapshot(clean_framework, "US", target_date)
     snapshots = {"US": us_snapshot}
+    account_activity_by_market = _account_activity_by_market(snapshots)
     tracked_source = _tracked_symbols_from_snapshot(clean_framework, us_snapshot)
     if clean_framework == "Cash_Anchor":
         cn_snapshot = _build_framework_snapshot(clean_framework, "CN", target_date)
         snapshots = {"CN": cn_snapshot, "US": us_snapshot}
+        account_activity_by_market = _account_activity_by_market(snapshots)
         tracked_source = _tracked_symbols_from_snapshot(clean_framework, cn_snapshot) + tracked_source
     tracked = _dedupe_tracked(tracked_source)
     limited_tracked = tracked[:MAX_CONTEXT_SYMBOLS]
@@ -376,6 +380,7 @@ def build_weekly_review_context(*, framework_id: str, as_of: date | None = None)
         "context_bundle_id": clean_framework,
         "strategy_context": _load_strategy_context(clean_framework, "ALL"),
         "snapshots": snapshots,
+        "account_activity_by_market": account_activity_by_market,
         "tracked_symbols": [asdict(item) for item in tracked],
         "context_symbol_limit": MAX_CONTEXT_SYMBOLS,
         "symbol_intel": intel,
@@ -539,6 +544,7 @@ def _build_framework_snapshot(framework_id: str, market: str, as_of: date) -> di
         snapshot = build_growth_snapshot(market="US")
         if clean_market in {"US", "ALL"}:
             snapshot = _attach_longbridge_growth_universe(snapshot)
+            snapshot = _attach_longbridge_account_activity(snapshot, as_of=as_of)
         return snapshot
     if framework_id == "Cash_Anchor":
         from src.cash_anchor_watchlist import build_cash_watchlist_snapshot
@@ -566,6 +572,7 @@ def _build_framework_snapshot(framework_id: str, market: str, as_of: date) -> di
         }
         if clean_market in {"US", "ALL"}:
             result = _attach_longbridge_cash_anchor_watchlist(result)
+            result = _attach_longbridge_account_activity(result, as_of=as_of)
         return result
     raise ValueError(f"未知策略岛：{framework_id}")
 
@@ -836,6 +843,110 @@ def _attach_longbridge_cash_anchor_watchlist(snapshot: dict[str, Any]) -> dict[s
     return enriched
 
 
+def _attach_longbridge_account_activity(snapshot: dict[str, Any], *, as_of: date) -> dict[str, Any]:
+    enriched = dict(snapshot)
+    try:
+        from src.longbridge_account_provider import build_account_activity_snapshot
+
+        payload = build_account_activity_snapshot(
+            days=7,
+            end=as_of,
+            currency="USD",
+            include_profit_analysis=False,
+        )
+    except Exception as exc:
+        enriched["longbridge_account_activity"] = {}
+        enriched["longbridge_account_activity_error"] = str(exc)
+        enriched["longbridge_account_activity_policy"] = {
+            "classification_rule": "长桥账户/成交读取失败时，保留其他上下文并记录数据缺口。",
+            "write_policy": "只读，不下单、不改单、不撤单。",
+        }
+        return enriched
+
+    compacted = _compact_account_activity_payload(payload)
+    enriched["longbridge_account_activity"] = compacted
+    enriched["longbridge_account_activity_policy"] = {
+        "classification_rule": "长桥账户资产、组合、历史订单和历史成交只读快照。",
+        "write_policy": payload.get("write_policy") or "read_only_account_data",
+    }
+    summary = dict(enriched.get("summary") or {})
+    activity_summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    summary["longbridge_account_activity_status"] = payload.get("status")
+    summary["longbridge_account_holding_count"] = activity_summary.get("holding_count", 0)
+    summary["longbridge_recent_order_count"] = activity_summary.get("order_count", 0)
+    summary["longbridge_recent_execution_count"] = activity_summary.get("execution_count", 0)
+    enriched["summary"] = summary
+    return enriched
+
+
+def _compact_account_activity_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    sections = payload.get("sections") if isinstance(payload.get("sections"), dict) else {}
+    return {
+        "source": payload.get("source"),
+        "scope": payload.get("scope"),
+        "as_of": payload.get("as_of"),
+        "status": payload.get("status"),
+        "period": payload.get("period") or {},
+        "symbol": payload.get("symbol") or "",
+        "currency": payload.get("currency") or "USD",
+        "summary": payload.get("summary") or {},
+        "data_quality": payload.get("data_quality") or {},
+        "write_policy": payload.get("write_policy") or "",
+        "sections": {
+            key: _compact_account_activity_section(section)
+            for key, section in sections.items()
+            if isinstance(section, dict)
+        },
+    }
+
+
+def _compact_account_activity_section(section: dict[str, Any]) -> dict[str, Any]:
+    if section.get("status") == "error":
+        return {
+            "status": "error",
+            "error": section.get("error") or "",
+            "data": None,
+        }
+    return {
+        "source": section.get("source"),
+        "scope": section.get("scope"),
+        "as_of": section.get("as_of"),
+        "command": section.get("command") or [],
+        "summary": section.get("summary") or {},
+        "data_preview": _compact_account_preview(section.get("data")),
+    }
+
+
+def _compact_account_preview(value: Any, *, depth: int = 3, limit: int = 10) -> Any:
+    if depth <= 0:
+        return "<truncated>"
+    if isinstance(value, list):
+        return [_compact_account_preview(item, depth=depth - 1, limit=limit) for item in value[:limit]]
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= limit:
+                result["..."] = f"{len(value) - limit} keys omitted"
+                break
+            result[str(key)] = _compact_account_preview(item, depth=depth - 1, limit=limit)
+        return result
+    return value
+
+
+def _account_activity_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    payload = snapshot.get("longbridge_account_activity")
+    return payload if isinstance(payload, dict) else {}
+
+
+def _account_activity_by_market(snapshots: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for market, snapshot in snapshots.items():
+        activity = _account_activity_from_snapshot(snapshot)
+        if activity:
+            result[market] = activity
+    return result
+
+
 def _load_strategy_context(framework_id: str, market: str) -> str:
     framework_dir = FRAMEWORKS_DIR / framework_id
     files = [framework_dir / "constitution.md"]
@@ -1017,6 +1128,12 @@ def _daily_data_gaps(
         gaps.append(f"长桥 Growth US universe 读取失败：{snapshot.get('longbridge_growth_universe_error')}")
     if snapshot.get("longbridge_cash_anchor_watchlist_error"):
         gaps.append(f"长桥 Cash Anchor US 自选股读取失败：{snapshot.get('longbridge_cash_anchor_watchlist_error')}")
+    if snapshot.get("longbridge_account_activity_error"):
+        gaps.append(f"长桥账户/成交只读快照读取失败：{snapshot.get('longbridge_account_activity_error')}")
+    account_activity = snapshot.get("longbridge_account_activity")
+    if isinstance(account_activity, dict) and account_activity.get("status") == "partial":
+        for item in (account_activity.get("data_quality") or {}).get("limitations") or []:
+            gaps.append(f"长桥账户/成交只读快照部分缺失：{item}")
     for symbol, payload in market_data.items():
         if payload.get("status") != "ok":
             gaps.append(f"{symbol} 行情不可用：{payload.get('error') or payload.get('status')}")
