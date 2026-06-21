@@ -31,6 +31,7 @@ class CommandRegistryTest(unittest.TestCase):
         self.assertIn("/holdings", text)
         self.assertIn("/cash-watchlist", text)
         self.assertIn("/sync longbridge dividends", text)
+        self.assertIn("/longbridge-health", text)
         self.assertIn("/growth-universe", text)
         self.assertIn("/research-radar", text)
         self.assertIn("/operation-plan", text)
@@ -288,6 +289,18 @@ class CommandRegistryTest(unittest.TestCase):
         self.assertIn("NVDA.US", reply or "")
         self.assertIn("QQQI.US", reply or "")
         sync_watchlist.assert_called_once()
+
+    @patch("src.longbridge_health.format_longbridge_health")
+    @patch("src.longbridge_health.run_longbridge_health")
+    def test_longbridge_health_command_uses_health_provider(self, run_health, format_health) -> None:
+        run_health.return_value = {"status": "ok"}
+        format_health.return_value = "长桥健康"
+
+        reply = handle_command("/longbridge-health timeout=3 cli=false network=false", "cli")
+
+        self.assertEqual(reply, "长桥健康")
+        run_health.assert_called_once_with(timeout_seconds=3, run_cli=False, run_network=False)
+        format_health.assert_called_once_with({"status": "ok"})
 
     @patch("src.longbridge_provider.apply_longbridge_cash_anchor_sync")
     def test_apply_longbridge_uses_provider(self, apply_sync) -> None:

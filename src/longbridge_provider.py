@@ -12,9 +12,11 @@ import re
 import subprocess
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from src.init import RUNTIME_DIR
+from src.longbridge_capabilities import assert_longbridge_command_allowed
 
 
 LONGBRIDGE_POSITIONS_COMMAND = ["longbridge", "positions", "--format", "json"]
@@ -854,6 +856,7 @@ def parse_longbridge_dividend_history(
 
 
 def _run_longbridge_positions(timeout_seconds: int) -> str:
+    assert_longbridge_command_allowed(LONGBRIDGE_POSITIONS_COMMAND)
     try:
         result = subprocess.run(
             LONGBRIDGE_POSITIONS_COMMAND,
@@ -875,6 +878,7 @@ def _run_longbridge_positions(timeout_seconds: int) -> str:
 
 
 def _run_longbridge_watchlist(timeout_seconds: int) -> str:
+    assert_longbridge_command_allowed(LONGBRIDGE_WATCHLIST_COMMAND)
     try:
         result = subprocess.run(
             LONGBRIDGE_WATCHLIST_COMMAND,
@@ -897,6 +901,7 @@ def _run_longbridge_watchlist(timeout_seconds: int) -> str:
 
 def _run_longbridge_quote(symbols: list[str], timeout_seconds: int) -> str:
     command = [*LONGBRIDGE_QUOTE_COMMAND_PREFIX, *symbols, "--format", "json"]
+    assert_longbridge_command_allowed(command)
     try:
         result = subprocess.run(
             command,
@@ -927,6 +932,7 @@ def _run_longbridge_cash_flow(*, start: date, end: date, timeout_seconds: int) -
         "--format",
         "json",
     ]
+    assert_longbridge_command_allowed(command)
     try:
         result = subprocess.run(
             command,
@@ -949,6 +955,7 @@ def _run_longbridge_cash_flow(*, start: date, end: date, timeout_seconds: int) -
 
 def _run_longbridge_dividend(symbol: str, *, timeout_seconds: int) -> str:
     command = [*LONGBRIDGE_DIVIDEND_COMMAND_PREFIX, symbol, "--format", "json"]
+    assert_longbridge_command_allowed(command)
     try:
         result = subprocess.run(
             command,
@@ -970,6 +977,7 @@ def _run_longbridge_dividend(symbol: str, *, timeout_seconds: int) -> str:
 
 
 def _run_longbridge_exchange_rate(*, timeout_seconds: int) -> str:
+    assert_longbridge_command_allowed(LONGBRIDGE_EXCHANGE_RATE_COMMAND)
     try:
         result = subprocess.run(
             LONGBRIDGE_EXCHANGE_RATE_COMMAND,
@@ -990,12 +998,20 @@ def _run_longbridge_exchange_rate(*, timeout_seconds: int) -> str:
     return result.stdout
 
 
-def _longbridge_env() -> dict[str, str]:
+def longbridge_log_path() -> Path:
+    return RUNTIME_DIR / "longbridge_cli_logs"
+
+
+def longbridge_env() -> dict[str, str]:
     env = dict(os.environ)
-    log_dir = RUNTIME_DIR / "longbridge_cli_logs"
+    log_dir = longbridge_log_path()
     log_dir.mkdir(parents=True, exist_ok=True)
     env.setdefault("LONGBRIDGE_LOG_PATH", str(log_dir))
     return env
+
+
+def _longbridge_env() -> dict[str, str]:
+    return longbridge_env()
 
 
 def _attach_quotes(proposal: dict[str, Any], quotes: dict[str, LongbridgeQuote]) -> None:

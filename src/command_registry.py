@@ -107,6 +107,13 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "Ledger",
         args_hint="longbridge|longbridge growth|longbridge watchlist|longbridge dividends",
     ),
+    CommandDef(
+        "longbridge-health",
+        "检查长桥 CLI、日志权限、网络和只读基础命令",
+        "Ledger",
+        aliases=("lb-health",),
+        args_hint="[cli=false] [network=false] [timeout=<seconds>]",
+    ),
     CommandDef("apply", "确认并写入外部同步结果；当前支持 longbridge cash_anchor", "Ledger", args_hint="longbridge cash_anchor"),
     CommandDef(
         "absorb",
@@ -191,6 +198,7 @@ def handle_command(raw_text: str, chat_id: str) -> str | None:
         "growth-snapshot": _handle_growth_snapshot,
         "growth-review": _handle_growth_review,
         "sync": _handle_sync,
+        "longbridge-health": _handle_longbridge_health,
         "apply": _handle_apply,
         "absorb": _handle_absorb,
         "dossier-refresh": _handle_dossier_refresh,
@@ -232,6 +240,7 @@ def help_text() -> str:
         "/operation-plan [limit=<n>] - 生成 Growth Engine Action Permission 和 Operation Plan",
         "/sync longbridge watchlist - 读取长桥自选股并按 Cash/Growth 分类",
         "/sync longbridge dividends [start=YYYY-MM-DD] [end=YYYY-MM-DD] - 同步长桥美元分配到账和历史分配",
+        "/longbridge-health [cli=false] [network=false] [timeout=<seconds>] - 检查长桥只读接入健康状态",
         "/apply longbridge cash_anchor - 确认后把长桥 QQQI/XQQI/TQQQ 写入 Cash Anchor 账本",
         "",
         "Growth Engine：",
@@ -758,6 +767,17 @@ def _handle_growth_universe(args: str, chat_id: str) -> str:
     except RuntimeError as exc:
         return str(exc)
     return format_growth_universe(payload)
+
+
+def _handle_longbridge_health(args: str, chat_id: str) -> str:
+    from src.longbridge_health import format_longbridge_health, run_longbridge_health
+
+    parsed = _parse_key_values(args)
+    timeout = _optional_int(parsed.get("timeout")) or 8
+    run_cli = str(parsed.get("cli") or "true").lower() not in {"0", "false", "no", "n"}
+    run_network = str(parsed.get("network") or "true").lower() not in {"0", "false", "no", "n"}
+    result = run_longbridge_health(timeout_seconds=timeout, run_cli=run_cli, run_network=run_network)
+    return format_longbridge_health(result)
 
 
 def _handle_research_radar(args: str, chat_id: str) -> str:
