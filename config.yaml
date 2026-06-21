@@ -75,6 +75,14 @@ agents:
     reasoning_effort: high
     max_output_tokens: 2400
 
+growth_universe:
+  cache_enabled: true
+  cache_ttl_seconds: 900
+  leveraged_etf_blocklist: "CONL,FNGD,FNGU,LABD,LABU,MSTU,MSTX,MSTZ,NVDL,NVDQ,NVDU,SOXL,SOXS,SPXL,SPXS,SQQQ,SVIX,TECL,TECS,TQQQ,TSLL,TSLQ,UPRO,UVIX"
+  leveraged_etf_allowlist: ""
+  ordinary_etf_allowlist: "DRAM,SPCX"
+  special_etf_classifications: "DRAM:memory_semiconductor_etf:普通主题 ETF，聚焦存储与半导体周期，不属于杠杆 ETF;SPCX:spac_new_issue_etf:普通主题 ETF，聚焦 SPAC 与新上市公司，不属于杠杆 ETF"
+
 messaging:
   provider: feishu
   app_id_env: FEISHU_APP_ID

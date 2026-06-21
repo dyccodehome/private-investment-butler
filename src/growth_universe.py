@@ -7,10 +7,15 @@ and watchlists into one read-only US universe.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
+from src.app_config import get_config
+from src.init import RUNTIME_DIR
 from src.longbridge_provider import (
     CASH_ANCHOR_SYMBOLS,
     sync_longbridge_growth_positions,
@@ -24,32 +29,57 @@ GROWTH_UNIVERSE_RULE = (
     "期权合约不入池，只映射到底层股票；2x/3x 杠杆 ETF 排除；普通 ETF 可以入池。"
 )
 
-LEVERAGED_ETF_SYMBOLS = {
-    "TQQQ",
-    "SQQQ",
-    "UPRO",
-    "SPXL",
-    "SPXS",
-    "SOXL",
-    "SOXS",
-    "TECL",
-    "TECS",
+DEFAULT_LEVERAGED_ETF_SYMBOLS = {
     "CONL",
-    "FNGU",
     "FNGD",
-    "LABU",
+    "FNGU",
     "LABD",
-    "TSLL",
-    "TSLQ",
-    "NVDL",
-    "NVDU",
-    "NVDQ",
+    "LABU",
     "MSTU",
     "MSTX",
     "MSTZ",
-    "UVIX",
+    "NVDL",
+    "NVDQ",
+    "NVDU",
+    "SOXL",
+    "SOXS",
+    "SPXL",
+    "SPXS",
+    "SQQQ",
     "SVIX",
+    "TECL",
+    "TECS",
+    "TQQQ",
+    "TSLL",
+    "TSLQ",
+    "UPRO",
+    "UVIX",
 }
+
+DEFAULT_SPECIAL_ETF_CLASSIFICATIONS = {
+    "DRAM": {
+        "asset_subtype": "memory_semiconductor_etf",
+        "notes": "普通主题 ETF，聚焦存储与半导体周期，不属于杠杆 ETF。",
+    },
+    "SPCX": {
+        "asset_subtype": "spac_new_issue_etf",
+        "notes": "普通主题 ETF，聚焦 SPAC 与新上市公司，不属于杠杆 ETF。",
+    },
+}
+
+DEFAULT_GROWTH_UNIVERSE_CACHE_TTL_SECONDS = 900
+
+
+@dataclass(frozen=True)
+class GrowthUniverseConfig:
+    cache_enabled: bool = True
+    cache_ttl_seconds: int = DEFAULT_GROWTH_UNIVERSE_CACHE_TTL_SECONDS
+    leveraged_etf_blocklist: set[str] = field(default_factory=lambda: set(DEFAULT_LEVERAGED_ETF_SYMBOLS))
+    leveraged_etf_allowlist: set[str] = field(default_factory=set)
+    ordinary_etf_allowlist: set[str] = field(default_factory=lambda: set(DEFAULT_SPECIAL_ETF_CLASSIFICATIONS))
+    special_etf_classifications: dict[str, dict[str, str]] = field(
+        default_factory=lambda: dict(DEFAULT_SPECIAL_ETF_CLASSIFICATIONS)
+    )
 
 
 @dataclass
@@ -58,6 +88,8 @@ class GrowthUniverseItem:
     name: str
     market: str = "US"
     asset_type: str = "stock"
+    asset_subtype: str = "common_stock"
+    classification_tags: list[str] = field(default_factory=list)
     source_types: list[str] = field(default_factory=list)
     source_symbols: list[str] = field(default_factory=list)
     source_groups: list[str] = field(default_factory=list)
@@ -71,20 +103,44 @@ class GrowthUniverseItem:
     reason: str = ""
 
 
-def sync_growth_universe(timeout_seconds: int = 15) -> dict[str, Any]:
+def sync_growth_universe(
+    timeout_seconds: int = 15,
+    *,
+    use_cache: bool = True,
+    refresh: bool = False,
+) -> dict[str, Any]:
     """Read Longbridge and return the normalized Growth Engine universe."""
+
+    config = load_growth_universe_config()
+    if use_cache and not refresh and config.cache_enabled:
+        cached = _read_cached_growth_universe(config)
+        if cached:
+            return cached
 
     positions = sync_longbridge_growth_positions(timeout_seconds=timeout_seconds)
     watchlist = sync_longbridge_watchlist(timeout_seconds=timeout_seconds)
-    return build_growth_universe_payload(positions, watchlist)
+    payload = build_growth_universe_payload(positions, watchlist, config=config)
+    payload["cache"] = {
+        "hit": False,
+        "enabled": config.cache_enabled,
+        "ttl_seconds": config.cache_ttl_seconds,
+        "path": str(_cache_path()),
+        "written_at": _now_iso(),
+    }
+    if config.cache_enabled:
+        _write_cached_growth_universe(payload)
+    return payload
 
 
 def build_growth_universe_payload(
     position_payload: dict[str, Any],
     watchlist_payload: dict[str, Any],
+    *,
+    config: GrowthUniverseConfig | None = None,
 ) -> dict[str, Any]:
     """Build a single universe from Longbridge position and watchlist payloads."""
 
+    active_config = config or load_growth_universe_config()
     universe: dict[str, GrowthUniverseItem] = {}
     excluded: list[dict[str, Any]] = []
     counters = {
@@ -98,15 +154,17 @@ def build_growth_universe_payload(
         "excluded_non_us": 0,
         "stock_count": 0,
         "ordinary_etf_count": 0,
+        "special_etf_count": 0,
+        "option_underlying_stock_count": 0,
     }
 
     for row in _position_rows(position_payload):
         counters["source_positions"] += 1
-        _process_source_row(row, "longbridge_position", universe, excluded, counters)
+        _process_source_row(row, "longbridge_position", universe, excluded, counters, active_config)
 
     for row in _watchlist_rows(watchlist_payload):
         counters["source_watch_items"] += 1
-        _process_source_row(row, "longbridge_watchlist", universe, excluded, counters)
+        _process_source_row(row, "longbridge_watchlist", universe, excluded, counters, active_config)
 
     items = sorted(
         (asdict(item) for item in universe.values()),
@@ -115,8 +173,12 @@ def build_growth_universe_payload(
     for item in items:
         if item["asset_type"] == "etf":
             counters["ordinary_etf_count"] += 1
+            if item.get("asset_subtype") not in {"ordinary_etf", ""}:
+                counters["special_etf_count"] += 1
         elif item["asset_type"] == "stock":
             counters["stock_count"] += 1
+            if "option_underlying" in item.get("classification_tags", []):
+                counters["option_underlying_stock_count"] += 1
 
     summary = {
         **counters,
@@ -132,6 +194,7 @@ def build_growth_universe_payload(
         "source": "longbridge_cli",
         "scope": "growth_engine_us_universe",
         "classification_rule": GROWTH_UNIVERSE_RULE,
+        "classification_policy": _config_payload(active_config),
         "cash_anchor_symbols": sorted(CASH_ANCHOR_SYMBOLS),
         "universe": items,
         "excluded": excluded,
@@ -154,6 +217,7 @@ def format_growth_universe(payload: dict[str, Any]) -> str:
         f"- 持仓来源：{summary.get('source_positions', 0)}",
         f"- 自选来源：{summary.get('source_watch_items', 0)}",
         f"- 期权合约映射底层：{summary.get('option_contracts_mapped', 0)}",
+        f"- 普通 ETF：{summary.get('ordinary_etf_count', 0)}，特殊 ETF：{summary.get('special_etf_count', 0)}",
         (
             "- 已排除："
             f"Cash Anchor {summary.get('excluded_cash_anchor', 0)}，"
@@ -164,6 +228,11 @@ def format_growth_universe(payload: dict[str, Any]) -> str:
         f"- 规则：{payload.get('classification_rule') or GROWTH_UNIVERSE_RULE}",
         "- 写入策略：只读上下文，不写入本地 Growth 账本。",
     ]
+    cache = payload.get("cache") or {}
+    if cache:
+        cache_state = "命中" if cache.get("hit") else "刷新"
+        age = f"，age={cache.get('age_seconds')}s" if cache.get("hit") else ""
+        lines.append(f"- 缓存：{cache_state}{age}，ttl={cache.get('ttl_seconds')}s")
 
     universe = list(payload.get("universe") or [])
     if universe:
@@ -173,9 +242,10 @@ def format_growth_universe(payload: dict[str, Any]) -> str:
             source = ",".join(item.get("source_types") or [])
             group = f" [{','.join(item.get('source_groups') or [])}]" if item.get("source_groups") else ""
             position = " holding" if item.get("has_position") else ""
+            subtype = f"/{item.get('asset_subtype')}" if item.get("asset_subtype") else ""
             lines.append(
                 f"- {item.get('symbol')} {item.get('name')} "
-                f"({item.get('asset_type')}, {source}){group}{position}"
+                f"({item.get('asset_type')}{subtype}, {source}){group}{position}"
             )
         if len(universe) > 40:
             lines.append(f"- ... 其余 {len(universe) - 40} 个略")
@@ -198,6 +268,7 @@ def _process_source_row(
     universe: dict[str, GrowthUniverseItem],
     excluded: list[dict[str, Any]],
     counters: dict[str, int],
+    config: GrowthUniverseConfig,
 ) -> None:
     source_symbol = str(row.get("symbol") or "").strip().upper()
     if not source_symbol:
@@ -214,13 +285,15 @@ def _process_source_row(
         counters["option_contracts_mapped"] += 1
         symbol = option_underlying
         asset_type = "stock"
+        asset_subtype = "option_underlying_stock"
+        classification_tags = ["option_underlying"]
         source_type = f"{source_type}_option_underlying"
         counters["option_underlyings_added"] += 1
     else:
         symbol = normalize_us_symbol(source_symbol)
-        asset_type = _asset_type(symbol, name)
+        asset_type, asset_subtype, classification_tags = _classify_asset(symbol, name, config)
 
-    reason = _exclusion_reason(symbol, name)
+    reason = _exclusion_reason(symbol, name, config)
     if reason:
         excluded.append(_excluded_row(row, symbol, reason, source_type))
         if reason == "cash_anchor_symbol":
@@ -235,6 +308,8 @@ def _process_source_row(
         symbol=symbol,
         name=_display_name(name, source_symbol, symbol),
         asset_type=asset_type,
+        asset_subtype=asset_subtype,
+        classification_tags=classification_tags,
         source_types=[source_type],
         source_symbols=[source_symbol],
         source_groups=_source_groups(row),
@@ -289,12 +364,12 @@ def _looks_like_us_row(row: dict[str, Any]) -> bool:
     return market in {"US", "USA"} or symbol.endswith(".US") or currency == "USD"
 
 
-def _exclusion_reason(symbol: str, name: str) -> str:
+def _exclusion_reason(symbol: str, name: str, config: GrowthUniverseConfig) -> str:
     if _is_cash_anchor_symbol(symbol):
         return "cash_anchor_symbol"
     if _is_index_symbol(symbol, name):
         return "index_not_investable"
-    if _is_leveraged_etf(symbol, name):
+    if _is_leveraged_etf(symbol, name, config):
         return "leveraged_etf"
     return ""
 
@@ -312,10 +387,12 @@ def _is_index_symbol(symbol: str, name: str) -> bool:
     return base.startswith(".") or (" INDEX" in text and "ETF" not in text and "FUND" not in text)
 
 
-def _is_leveraged_etf(symbol: str, name: str) -> bool:
+def _is_leveraged_etf(symbol: str, name: str, config: GrowthUniverseConfig) -> bool:
     base = (symbol[:-3] if symbol.endswith(".US") else symbol).upper()
     text = f"{base} {name}".upper()
-    if base in LEVERAGED_ETF_SYMBOLS:
+    if base in config.leveraged_etf_allowlist:
+        return False
+    if base in config.leveraged_etf_blocklist:
         return True
     patterns = [
         r"\b[2345]X\b",
@@ -330,10 +407,18 @@ def _is_leveraged_etf(symbol: str, name: str) -> bool:
     return _looks_like_etf(symbol, name) or any(token in text for token in (" SHARES", " ETN", " DAILY "))
 
 
-def _asset_type(symbol: str, name: str) -> str:
+def _classify_asset(symbol: str, name: str, config: GrowthUniverseConfig) -> tuple[str, str, list[str]]:
+    base = _base_symbol(symbol)
     if _looks_like_etf(symbol, name):
-        return "etf"
-    return "stock"
+        special = config.special_etf_classifications.get(base) or {}
+        subtype = str(special.get("asset_subtype") or "ordinary_etf")
+        tags = ["ordinary_etf"]
+        if special:
+            tags.append("special_etf")
+        if base in config.ordinary_etf_allowlist:
+            tags.append("ordinary_etf_allowlist")
+        return "etf", subtype, tags
+    return "stock", "common_stock", ["common_stock"]
 
 
 def _looks_like_etf(symbol: str, name: str) -> bool:
@@ -356,6 +441,9 @@ def _merge_universe_item(universe: dict[str, GrowthUniverseItem], candidate: Gro
     existing.name = existing.name or candidate.name
     if existing.asset_type != "stock":
         existing.asset_type = candidate.asset_type
+    if existing.asset_subtype == "common_stock" and candidate.asset_subtype != "common_stock":
+        existing.asset_subtype = candidate.asset_subtype
+    existing.classification_tags = _append_unique(existing.classification_tags, candidate.classification_tags)
     existing.source_types = _append_unique(existing.source_types, candidate.source_types)
     existing.source_symbols = _append_unique(existing.source_symbols, candidate.source_symbols)
     existing.source_groups = _append_unique(existing.source_groups, candidate.source_groups)
@@ -420,3 +508,139 @@ def _compact_source_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "summary": payload.get("summary") or {},
         "write_policy": payload.get("write_policy"),
     }
+
+
+def load_growth_universe_config() -> GrowthUniverseConfig:
+    section = get_config().raw.get("growth_universe") or {}
+    if not isinstance(section, dict):
+        section = {}
+    special = _parse_special_classifications(section.get("special_etf_classifications"))
+    merged_special = dict(DEFAULT_SPECIAL_ETF_CLASSIFICATIONS)
+    merged_special.update(special)
+    ordinary_allowlist = set(merged_special)
+    ordinary_allowlist.update(_symbol_set(section.get("ordinary_etf_allowlist")))
+    return GrowthUniverseConfig(
+        cache_enabled=_bool_value(section.get("cache_enabled"), default=True),
+        cache_ttl_seconds=max(0, int(_numeric_value(section.get("cache_ttl_seconds"), DEFAULT_GROWTH_UNIVERSE_CACHE_TTL_SECONDS))),
+        leveraged_etf_blocklist=_symbol_set(
+            section.get("leveraged_etf_blocklist"),
+            default=DEFAULT_LEVERAGED_ETF_SYMBOLS,
+        ),
+        leveraged_etf_allowlist=_symbol_set(section.get("leveraged_etf_allowlist")),
+        ordinary_etf_allowlist=ordinary_allowlist,
+        special_etf_classifications=merged_special,
+    )
+
+
+def _read_cached_growth_universe(config: GrowthUniverseConfig) -> dict[str, Any] | None:
+    path = _cache_path()
+    if not path.exists():
+        return None
+    try:
+        age_seconds = int(datetime.now(timezone.utc).timestamp() - path.stat().st_mtime)
+    except OSError:
+        return None
+    if config.cache_ttl_seconds <= 0 or age_seconds > config.cache_ttl_seconds:
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    payload["cache"] = {
+        "hit": True,
+        "enabled": config.cache_enabled,
+        "ttl_seconds": config.cache_ttl_seconds,
+        "age_seconds": age_seconds,
+        "path": str(path),
+    }
+    return payload
+
+
+def _write_cached_growth_universe(payload: dict[str, Any]) -> None:
+    path = _cache_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    except OSError:
+        return
+
+
+def _cache_path() -> Path:
+    return RUNTIME_DIR / "cache" / "growth_universe.json"
+
+
+def _config_payload(config: GrowthUniverseConfig) -> dict[str, Any]:
+    return {
+        "cache_enabled": config.cache_enabled,
+        "cache_ttl_seconds": config.cache_ttl_seconds,
+        "leveraged_etf_blocklist": sorted(config.leveraged_etf_blocklist),
+        "leveraged_etf_allowlist": sorted(config.leveraged_etf_allowlist),
+        "ordinary_etf_allowlist": sorted(config.ordinary_etf_allowlist),
+        "special_etf_classifications": config.special_etf_classifications,
+    }
+
+
+def _base_symbol(symbol: str) -> str:
+    clean = str(symbol or "").strip().upper()
+    return clean[:-3] if clean.endswith(".US") else clean
+
+
+def _symbol_set(value: Any, *, default: set[str] | None = None) -> set[str]:
+    if value in (None, ""):
+        return set(default or set())
+    if isinstance(value, str):
+        parts = re.split(r"[,;\s]+", value)
+    elif isinstance(value, (list, tuple, set)):
+        parts = [str(item) for item in value]
+    else:
+        parts = [str(value)]
+    result = {_base_symbol(part) for part in parts if str(part).strip()}
+    return result or set(default or set())
+
+
+def _parse_special_classifications(value: Any) -> dict[str, dict[str, str]]:
+    if isinstance(value, dict):
+        result: dict[str, dict[str, str]] = {}
+        for key, raw in value.items():
+            base = _base_symbol(str(key))
+            if isinstance(raw, dict):
+                subtype = str(raw.get("asset_subtype") or "ordinary_etf")
+                notes = str(raw.get("notes") or "")
+            else:
+                subtype = str(raw or "ordinary_etf")
+                notes = ""
+            result[base] = {"asset_subtype": subtype, "notes": notes}
+        return result
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    result: dict[str, dict[str, str]] = {}
+    for item in value.split(";"):
+        parts = [part.strip() for part in item.split(":", 2)]
+        if not parts or not parts[0]:
+            continue
+        base = _base_symbol(parts[0])
+        subtype = parts[1] if len(parts) > 1 and parts[1] else "ordinary_etf"
+        notes = parts[2] if len(parts) > 2 else ""
+        result[base] = {"asset_subtype": subtype, "notes": notes}
+    return result
+
+
+def _bool_value(value: Any, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _numeric_value(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()

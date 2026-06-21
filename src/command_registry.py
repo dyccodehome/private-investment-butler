@@ -227,7 +227,7 @@ def help_text() -> str:
         "/apply longbridge cash_anchor - 确认后把长桥 QQQI/XQQI/TQQQ 写入 Cash Anchor 账本",
         "",
         "Growth Engine：",
-        "/growth-universe - 查看长桥归一化后的美股 universe",
+        "/growth-universe [refresh=true] - 查看长桥归一化后的美股 universe",
         "/growth-snapshot [market=US] - 查看 Growth 本地遗留快照",
         "/growth-review <symbol> - 按成长框架复盘单个持仓或自选标的",
         "",
@@ -701,7 +701,7 @@ def _handle_sync(args: str, chat_id: str) -> str:
         from src.growth_universe import format_growth_universe, sync_growth_universe
 
         try:
-            result = sync_growth_universe()
+            result = sync_growth_universe(refresh=True)
         except RuntimeError as exc:
             return str(exc)
         return format_growth_universe(result)
@@ -742,8 +742,10 @@ def _handle_sync(args: str, chat_id: str) -> str:
 def _handle_growth_universe(args: str, chat_id: str) -> str:
     from src.growth_universe import format_growth_universe, sync_growth_universe
 
+    parsed = _parse_key_values(args)
+    refresh = str(parsed.get("refresh") or parsed.get("force") or "").lower() in {"1", "true", "yes", "y"}
     try:
-        payload = sync_growth_universe()
+        payload = sync_growth_universe(refresh=refresh)
     except RuntimeError as exc:
         return str(exc)
     return format_growth_universe(payload)

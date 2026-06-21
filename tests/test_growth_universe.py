@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
-from src.growth_universe import build_growth_universe_payload, option_underlying_symbol
+from src import growth_universe
+from src.growth_universe import GrowthUniverseConfig, build_growth_universe_payload, option_underlying_symbol
 
 
 class GrowthUniverseTest(unittest.TestCase):
@@ -123,6 +127,83 @@ class GrowthUniverseTest(unittest.TestCase):
         self.assertEqual(payload["summary"]["universe_count"], 3)
         self.assertEqual(payload["summary"]["ordinary_etf_count"], 1)
         self.assertEqual(payload["summary"]["option_contracts_mapped"], 2)
+
+    def test_special_etf_and_allowlist_classification(self) -> None:
+        payload = build_growth_universe_payload(
+            {"positions": [], "summary": {}},
+            {
+                "growth_us_watchlist": [
+                    {
+                        "symbol": "SPCX.US",
+                        "name": "The SPAC and New Issue ETF",
+                        "market": "US",
+                    },
+                    {
+                        "symbol": "FAKE.US",
+                        "name": "2x Robotics ETF",
+                        "market": "US",
+                    },
+                ],
+                "summary": {},
+            },
+            config=GrowthUniverseConfig(
+                leveraged_etf_allowlist={"FAKE"},
+                ordinary_etf_allowlist={"SPCX", "FAKE"},
+                special_etf_classifications={
+                    "SPCX": {"asset_subtype": "spac_new_issue_etf", "notes": "普通 SPAC ETF"}
+                },
+            ),
+        )
+
+        symbols = {item["symbol"]: item for item in payload["universe"]}
+
+        self.assertEqual(symbols["SPCX.US"]["asset_type"], "etf")
+        self.assertEqual(symbols["SPCX.US"]["asset_subtype"], "spac_new_issue_etf")
+        self.assertIn("special_etf", symbols["SPCX.US"]["classification_tags"])
+        self.assertEqual(symbols["FAKE.US"]["asset_type"], "etf")
+        self.assertEqual(symbols["FAKE.US"]["asset_subtype"], "ordinary_etf")
+        self.assertEqual(payload["summary"]["special_etf_count"], 1)
+
+    def test_configured_blocklist_excludes_symbol(self) -> None:
+        payload = build_growth_universe_payload(
+            {"positions": [], "summary": {}},
+            {
+                "growth_us_watchlist": [
+                    {
+                        "symbol": "SPCX.US",
+                        "name": "The SPAC and New Issue ETF",
+                        "market": "US",
+                    }
+                ],
+                "summary": {},
+            },
+            config=GrowthUniverseConfig(leveraged_etf_blocklist={"SPCX"}),
+        )
+
+        self.assertFalse(payload["universe"])
+        self.assertEqual(payload["excluded"][0]["reason"], "leveraged_etf")
+
+    def test_sync_growth_universe_uses_valid_cache(self) -> None:
+        with TemporaryDirectory() as tmp:
+            runtime_root = Path(tmp)
+            with patch.object(growth_universe, "RUNTIME_DIR", runtime_root), patch.object(
+                growth_universe, "sync_longbridge_growth_positions"
+            ) as sync_positions, patch.object(growth_universe, "sync_longbridge_watchlist") as sync_watchlist:
+                sync_positions.return_value = {
+                    "positions": [
+                        {"symbol": "NVDA.US", "name": "NVIDIA", "market": "US", "currency": "USD"},
+                    ],
+                    "summary": {},
+                }
+                sync_watchlist.return_value = {"growth_us_watchlist": [], "summary": {}}
+
+                first = growth_universe.sync_growth_universe(refresh=True)
+                second = growth_universe.sync_growth_universe()
+
+        self.assertFalse(first["cache"]["hit"])
+        self.assertTrue(second["cache"]["hit"])
+        self.assertEqual(sync_positions.call_count, 1)
+        self.assertEqual(sync_watchlist.call_count, 1)
 
 
 if __name__ == "__main__":
