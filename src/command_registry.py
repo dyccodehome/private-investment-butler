@@ -85,6 +85,13 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<multi-line key=value records>",
     ),
     CommandDef("growth-universe", "查看长桥归一化后的 Growth_Engine 美股 universe", "Growth", aliases=("growth-list",)),
+    CommandDef(
+        "research-radar",
+        "生成 Growth_Engine 只读投研雷达和 Research Signals",
+        "Growth",
+        aliases=("growth-radar", "research-signals"),
+        args_hint="[limit=<n>]",
+    ),
     CommandDef("growth-snapshot", "查看 Growth_Engine 本地遗留快照", "Growth", args_hint="[market=US]"),
     CommandDef("growth-review", "按 Growth_Engine 框架复盘单个持仓或自选标的", "Growth", args_hint="<symbol>"),
     CommandDef(
@@ -165,6 +172,7 @@ def handle_command(raw_text: str, chat_id: str) -> str | None:
         "snapshot": _handle_snapshot,
         "cash-watchlist": _handle_cash_watchlist,
         "growth-universe": _handle_growth_universe,
+        "research-radar": _handle_research_radar,
         "growth-snapshot": _handle_growth_snapshot,
         "growth-review": _handle_growth_review,
         "sync": _handle_sync,
@@ -204,6 +212,7 @@ def help_text() -> str:
         "/cash-watchlist 后接多行自选参数 - 批量新增或更新红利/现金流自选股",
         "/sync longbridge - 读取长桥持仓并生成同步提案",
         "/sync longbridge growth - 读取长桥并生成 Growth Engine 美股 universe",
+        "/research-radar [limit=<n>] - 生成 Growth Engine 投研雷达和 Research Signals",
         "/sync longbridge watchlist - 读取长桥自选股并按 Cash/Growth 分类",
         "/sync longbridge dividends [start=YYYY-MM-DD] [end=YYYY-MM-DD] - 同步长桥美元分配到账和历史分配",
         "/apply longbridge cash_anchor - 确认后把长桥 QQQI/XQQI/TQQQ 写入 Cash Anchor 账本",
@@ -731,6 +740,18 @@ def _handle_growth_universe(args: str, chat_id: str) -> str:
     return format_growth_universe(payload)
 
 
+def _handle_research_radar(args: str, chat_id: str) -> str:
+    from src.research_engine import build_growth_research_report, format_growth_research_report
+
+    parsed = _parse_key_values(args)
+    limit = _optional_int(parsed.get("limit")) or 12
+    try:
+        report = build_growth_research_report(max_symbols=limit)
+    except RuntimeError as exc:
+        return str(exc)
+    return format_growth_research_report(report)
+
+
 def _handle_apply(args: str, chat_id: str) -> str:
     target = " ".join(args.strip().lower().split())
     if target != "longbridge cash_anchor":
@@ -864,6 +885,15 @@ def _optional_amount(value: str | None) -> float | None:
     if value is None or value == "":
         return None
     return float(value.replace(",", ""))
+
+
+def _optional_int(value: str | None) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return max(1, int(value.replace(",", "")))
+    except ValueError:
+        return None
 
 
 def _required_amount(value: str) -> float:

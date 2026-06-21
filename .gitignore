@@ -57,8 +57,14 @@ frameworks/**/patch_archive/*
 
 frameworks/*/reports/**/*.md
 frameworks/*/reports/**/*.json
+frameworks/*/reports/**/*.jsonl
 frameworks/*/reports/**/*.csv
+frameworks/**/reports/**/*.md
+frameworks/**/reports/**/*.json
+frameworks/**/reports/**/*.jsonl
+frameworks/**/reports/**/*.csv
 !frameworks/*/reports/**/.gitkeep
+!frameworks/**/reports/**/.gitkeep
 
 # Runtime ledgers and generated local state
 runtime/*

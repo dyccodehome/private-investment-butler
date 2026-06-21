@@ -31,6 +31,7 @@ class CommandRegistryTest(unittest.TestCase):
         self.assertIn("/cash-watchlist", text)
         self.assertIn("/sync longbridge dividends", text)
         self.assertIn("/growth-universe", text)
+        self.assertIn("/research-radar", text)
         self.assertIn("/growth-review", text)
         self.assertIn("/absorb", text)
         self.assertIn("/dossier-refresh", text)
@@ -379,6 +380,34 @@ class CommandRegistryTest(unittest.TestCase):
         self.assertIsNotNone(reply)
         self.assertIn("Growth Engine 长桥 universe", reply or "")
         self.assertIn("NVDA.US", reply or "")
+
+    @patch("src.research_engine.build_growth_research_report")
+    def test_research_radar_command_uses_research_engine(self, build_report) -> None:
+        build_report.return_value = {
+            "as_of": "2026-06-16",
+            "universe_count": 1,
+            "analyzed_symbol_count": 1,
+            "data_quality": {"status": "ok", "limitations": []},
+            "theme_radar": [],
+            "research_signals": [
+                {
+                    "ticker": "NVDA.US",
+                    "name": "NVIDIA",
+                    "theme": "AI 算力与加速计算",
+                    "thesis_impact": "strengthened",
+                    "suggested_status": "hold_review",
+                    "evidence_strength": "medium",
+                }
+            ],
+            "deep_research_queue": [],
+        }
+
+        reply = handle_command("/research-radar limit=5", "cli")
+
+        self.assertIsNotNone(reply)
+        self.assertIn("Growth Engine 投研雷达", reply or "")
+        self.assertIn("NVDA.US", reply or "")
+        self.assertEqual(build_report.call_args.kwargs["max_symbols"], 5)
 
     @patch("src.research_dossier.refresh_dossier_facts")
     def test_dossier_refresh_uses_research_dossier_provider(self, refresh_dossier) -> None:

@@ -276,6 +276,14 @@ def build_daily_review_context(
     market_data = _collect_market_data(limited_tracked)
     intel = _collect_symbol_intel(limited_tracked)
     dossiers = _collect_research_dossier_summaries(clean_framework, limited_tracked)
+    research_engine = _build_research_engine_context(
+        framework_id=clean_framework,
+        snapshot=snapshot,
+        symbol_intel=intel,
+        research_dossiers=dossiers,
+        market_data=market_data,
+        as_of=target_date,
+    )
 
     return {
         "schema_version": 1,
@@ -293,6 +301,7 @@ def build_daily_review_context(
         "market_data": market_data,
         "symbol_intel": intel,
         "research_dossiers": dossiers,
+        "research_engine": research_engine,
         "history": {
             "previous_close": _compact_records(previous_close, include_context=False),
             "same_day_premarket": _compact_records(same_day_premarket, include_context=False),
@@ -322,6 +331,14 @@ def build_weekly_review_context(*, framework_id: str, as_of: date | None = None)
     limited_tracked = tracked[:MAX_CONTEXT_SYMBOLS]
     intel = _collect_symbol_intel(limited_tracked)
     dossiers = _collect_research_dossier_summaries(clean_framework, limited_tracked)
+    research_engine = _build_research_engine_context(
+        framework_id=clean_framework,
+        snapshot=us_snapshot,
+        symbol_intel=intel,
+        research_dossiers=dossiers,
+        market_data={},
+        as_of=target_date,
+    )
 
     return {
         "schema_version": 1,
@@ -340,6 +357,7 @@ def build_weekly_review_context(*, framework_id: str, as_of: date | None = None)
         "context_symbol_limit": MAX_CONTEXT_SYMBOLS,
         "symbol_intel": intel,
         "research_dossiers": dossiers,
+        "research_engine": research_engine,
         "daily_records": _compact_records(daily_records, include_context=False),
         "record_counts": _record_counts(daily_records),
         "optional_data_notes": _research_dossier_notes(dossiers),
@@ -657,6 +675,52 @@ def _collect_research_dossier_summaries(framework_id: str, symbols: list[Tracked
         except Exception as exc:
             result[item.symbol] = {"status": "error", "error": str(exc)}
     return result
+
+
+def _build_research_engine_context(
+    *,
+    framework_id: str,
+    snapshot: dict[str, Any],
+    symbol_intel: dict[str, Any],
+    research_dossiers: dict[str, Any],
+    market_data: dict[str, Any],
+    as_of: date,
+) -> dict[str, Any]:
+    if framework_id != "Growth_Engine":
+        return {
+            "status": "not_applicable",
+            "reason": "Research Engine MVP 当前只接入 Growth_Engine。",
+        }
+    from src.research_engine import build_growth_research_report
+
+    universe_payload = snapshot.get("longbridge_growth_universe_source")
+    if not isinstance(universe_payload, dict):
+        universe_payload = {
+            "source": "scheduled_review_snapshot",
+            "scope": "growth_engine_us_universe",
+            "universe": snapshot.get("longbridge_growth_universe") or [],
+            "summary": {
+                "universe_count": len(snapshot.get("longbridge_growth_universe") or []),
+            },
+            "write_policy": "read_only_context",
+        }
+    try:
+        report = build_growth_research_report(
+            universe_payload=universe_payload,
+            symbol_intel=symbol_intel,
+            research_dossiers=research_dossiers,
+            market_data=market_data,
+            as_of=as_of,
+            max_symbols=MAX_CONTEXT_SYMBOLS,
+            fetch_missing_context=False,
+        )
+    except Exception as exc:
+        return {
+            "status": "error",
+            "engine": "growth_research_mvp",
+            "error": str(exc),
+        }
+    return report
 
 
 def _attach_longbridge_growth_universe(snapshot: dict[str, Any]) -> dict[str, Any]:
