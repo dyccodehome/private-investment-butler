@@ -32,6 +32,7 @@ class CommandRegistryTest(unittest.TestCase):
         self.assertIn("/cash-watchlist", text)
         self.assertIn("/sync longbridge dividends", text)
         self.assertIn("/longbridge-health", text)
+        self.assertIn("/longbridge-account", text)
         self.assertIn("/growth-universe", text)
         self.assertIn("/research-radar", text)
         self.assertIn("/operation-plan", text)
@@ -301,6 +302,33 @@ class CommandRegistryTest(unittest.TestCase):
         self.assertEqual(reply, "长桥健康")
         run_health.assert_called_once_with(timeout_seconds=3, run_cli=False, run_network=False)
         format_health.assert_called_once_with({"status": "ok"})
+
+    @patch("src.longbridge_account_provider.format_account_activity_snapshot")
+    @patch("src.longbridge_account_provider.build_account_activity_snapshot")
+    def test_longbridge_account_command_uses_account_provider(self, build_snapshot, format_snapshot) -> None:
+        build_snapshot.return_value = {"status": "ok"}
+        format_snapshot.return_value = "账户快照"
+
+        reply = handle_command(
+            "/longbridge-account days=7 symbol=nvda.us currency=usd profit=true timeout=3",
+            "cli",
+        )
+
+        self.assertEqual(reply, "账户快照")
+        build_snapshot.assert_called_once()
+        kwargs = build_snapshot.call_args.kwargs
+        self.assertEqual(kwargs["days"], 7)
+        self.assertEqual(kwargs["symbol"], "nvda.us")
+        self.assertEqual(kwargs["currency"], "usd")
+        self.assertTrue(kwargs["include_profit_analysis"])
+        self.assertEqual(kwargs["timeout_seconds"], 3)
+        format_snapshot.assert_called_once_with({"status": "ok"})
+
+    def test_longbridge_account_command_validates_dates(self) -> None:
+        reply = handle_command("/longbridge-account start=bad-date", "cli")
+
+        self.assertIsNotNone(reply)
+        self.assertIn("日期格式不对", reply or "")
 
     @patch("src.longbridge_provider.apply_longbridge_cash_anchor_sync")
     def test_apply_longbridge_uses_provider(self, apply_sync) -> None:

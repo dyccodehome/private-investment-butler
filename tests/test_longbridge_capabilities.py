@@ -18,12 +18,21 @@ class LongbridgeCapabilitiesTest(unittest.TestCase):
         capability = assert_longbridge_command_allowed(["longbridge", "quote", "NVDA.US", "--format", "json"])
         self.assertEqual(capability.capability_id, "quote")
 
+        capability = assert_longbridge_command_allowed(["longbridge", "order", "--history", "--format", "json"])
+        self.assertEqual(capability.capability_id, "order_history")
+
+        capability = assert_longbridge_command_allowed(["longbridge", "order", "executions", "--history", "--format", "json"])
+        self.assertEqual(capability.capability_id, "execution_history")
+
     def test_denies_trading_write_commands(self) -> None:
         with self.assertRaises(PermissionError):
             assert_longbridge_command_allowed(["longbridge", "submit-order", "NVDA.US"])
 
         with self.assertRaises(PermissionError):
             assert_longbridge_command_allowed(["longbridge", "cancel-order", "123"])
+
+        with self.assertRaises(PermissionError):
+            assert_longbridge_command_allowed(["longbridge", "order", "buy", "NVDA.US", "1"])
 
     def test_denies_unknown_commands_until_provider_is_fixed(self) -> None:
         with self.assertRaises(PermissionError):

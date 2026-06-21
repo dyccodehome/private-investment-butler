@@ -68,17 +68,45 @@ READ_CAPABILITIES: dict[str, LongbridgeCapability] = {
         command_prefix=("longbridge", "exchange-rate"),
         implemented=True,
     ),
+    "assets": LongbridgeCapability(
+        capability_id="assets",
+        domain="account",
+        access="read",
+        description="读取账户资产、现金、购买力和保证金概览。",
+        command_prefix=("longbridge", "assets"),
+        implemented=True,
+    ),
+    "portfolio": LongbridgeCapability(
+        capability_id="portfolio",
+        domain="account",
+        access="read",
+        description="读取组合总览、持仓、现金和盈亏。",
+        command_prefix=("longbridge", "portfolio"),
+        implemented=True,
+    ),
     "order_history": LongbridgeCapability(
         capability_id="order_history",
         domain="execution_query",
         access="read",
         description="读取历史订单和委托状态。",
+        command_prefix=("longbridge", "order"),
+        implemented=True,
     ),
     "execution_history": LongbridgeCapability(
         capability_id="execution_history",
         domain="execution_query",
         access="read",
         description="读取历史成交。",
+        command_prefix=("longbridge", "order", "executions"),
+        implemented=True,
+    ),
+    "profit_analysis": LongbridgeCapability(
+        capability_id="profit_analysis",
+        domain="account",
+        access="read",
+        description="读取账户盈亏分析。",
+        command_prefix=("longbridge", "profit-analysis"),
+        implemented=True,
     ),
     "candles": LongbridgeCapability(
         capability_id="candles",
@@ -161,13 +189,15 @@ DENIED_WRITE_CAPABILITIES: dict[str, LongbridgeCapability] = {
 DENIED_COMMAND_TERMS = {
     "buy",
     "sell",
-    "trade",
-    "order",
     "place-order",
     "submit-order",
     "replace-order",
     "modify-order",
+    "buy",
+    "sell",
     "cancel-order",
+    "cancel",
+    "replace",
     "conditional-order",
     "recurring-order",
     "option-order",
@@ -206,9 +236,13 @@ def assert_longbridge_command_allowed(command: Sequence[str]) -> LongbridgeCapab
     if denied:
         raise PermissionError(f"禁止执行长桥交易写命令：{', '.join(denied)}")
 
-    for capability in READ_CAPABILITIES.values():
-        if capability.implemented and capability.command_prefix and _starts_with(clean, capability.command_prefix):
-            return capability
+    matches = [
+        capability
+        for capability in READ_CAPABILITIES.values()
+        if capability.implemented and capability.command_prefix and _starts_with(clean, capability.command_prefix)
+    ]
+    if matches:
+        return max(matches, key=lambda item: len(item.command_prefix))
     raise PermissionError(f"长桥命令未在只读 allowlist 中登记：{' '.join(clean)}")
 
 

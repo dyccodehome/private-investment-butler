@@ -114,6 +114,13 @@ COMMAND_REGISTRY: list[CommandDef] = [
         aliases=("lb-health",),
         args_hint="[cli=false] [network=false] [timeout=<seconds>]",
     ),
+    CommandDef(
+        "longbridge-account",
+        "读取长桥账户资产、组合、历史订单和成交的只读快照",
+        "Ledger",
+        aliases=("lb-account",),
+        args_hint="[days=<n>] [symbol=<code>] [currency=USD] [profit=true]",
+    ),
     CommandDef("apply", "确认并写入外部同步结果；当前支持 longbridge cash_anchor", "Ledger", args_hint="longbridge cash_anchor"),
     CommandDef(
         "absorb",
@@ -199,6 +206,7 @@ def handle_command(raw_text: str, chat_id: str) -> str | None:
         "growth-review": _handle_growth_review,
         "sync": _handle_sync,
         "longbridge-health": _handle_longbridge_health,
+        "longbridge-account": _handle_longbridge_account,
         "apply": _handle_apply,
         "absorb": _handle_absorb,
         "dossier-refresh": _handle_dossier_refresh,
@@ -241,6 +249,7 @@ def help_text() -> str:
         "/sync longbridge watchlist - 读取长桥自选股并按 Cash/Growth 分类",
         "/sync longbridge dividends [start=YYYY-MM-DD] [end=YYYY-MM-DD] - 同步长桥美元分配到账和历史分配",
         "/longbridge-health [cli=false] [network=false] [timeout=<seconds>] - 检查长桥只读接入健康状态",
+        "/longbridge-account [days=<n>] [symbol=<code>] [currency=USD] [profit=true] - 读取长桥账户和成交只读快照",
         "/apply longbridge cash_anchor - 确认后把长桥 QQQI/XQQI/TQQQ 写入 Cash Anchor 账本",
         "",
         "Growth Engine：",
@@ -778,6 +787,35 @@ def _handle_longbridge_health(args: str, chat_id: str) -> str:
     run_network = str(parsed.get("network") or "true").lower() not in {"0", "false", "no", "n"}
     result = run_longbridge_health(timeout_seconds=timeout, run_cli=run_cli, run_network=run_network)
     return format_longbridge_health(result)
+
+
+def _handle_longbridge_account(args: str, chat_id: str) -> str:
+    from datetime import date
+
+    from src.longbridge_account_provider import build_account_activity_snapshot, format_account_activity_snapshot
+
+    parsed = _parse_key_values(args)
+    days = _optional_int(parsed.get("days")) or 30
+    timeout = _optional_int(parsed.get("timeout")) or 15
+    include_profit = str(parsed.get("profit") or parsed.get("profit_analysis") or "").lower() in {"1", "true", "yes", "y"}
+    try:
+        start = date.fromisoformat(parsed["start"]) if parsed.get("start") else None
+        end = date.fromisoformat(parsed["end"]) if parsed.get("end") else None
+    except ValueError as exc:
+        return f"日期格式不对：{exc}。请使用 YYYY-MM-DD。"
+    try:
+        snapshot = build_account_activity_snapshot(
+            days=days,
+            start=start,
+            end=end,
+            symbol=parsed.get("symbol"),
+            currency=parsed.get("currency") or "USD",
+            include_profit_analysis=include_profit,
+            timeout_seconds=timeout,
+        )
+    except RuntimeError as exc:
+        return str(exc)
+    return format_account_activity_snapshot(snapshot)
 
 
 def _handle_research_radar(args: str, chat_id: str) -> str:
