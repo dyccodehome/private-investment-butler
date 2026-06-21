@@ -276,12 +276,23 @@ def build_daily_review_context(
     market_data = _collect_market_data(limited_tracked)
     intel = _collect_symbol_intel(limited_tracked)
     dossiers = _collect_research_dossier_summaries(clean_framework, limited_tracked)
+    data_gaps = _daily_data_gaps(snapshot, tracked, market_data, intel, dossiers)
     research_engine = _build_research_engine_context(
         framework_id=clean_framework,
         snapshot=snapshot,
         symbol_intel=intel,
         research_dossiers=dossiers,
         market_data=market_data,
+        as_of=target_date,
+    )
+    operation_framework = _build_operation_framework_context(
+        framework_id=clean_framework,
+        market=clean_market,
+        workflow_type=clean_workflow,
+        tracked_symbols=[asdict(item) for item in tracked],
+        research_engine=research_engine,
+        market_data=market_data,
+        data_gaps=data_gaps,
         as_of=target_date,
     )
 
@@ -302,6 +313,7 @@ def build_daily_review_context(
         "symbol_intel": intel,
         "research_dossiers": dossiers,
         "research_engine": research_engine,
+        "operation_framework": operation_framework,
         "history": {
             "previous_close": _compact_records(previous_close, include_context=False),
             "same_day_premarket": _compact_records(same_day_premarket, include_context=False),
@@ -309,7 +321,7 @@ def build_daily_review_context(
         },
         "optional_data_notes": _research_dossier_notes(dossiers),
         "instructions": _workflow_instructions(clean_framework, clean_market, clean_workflow),
-        "data_gaps": _daily_data_gaps(snapshot, tracked, market_data, intel, dossiers),
+        "data_gaps": data_gaps,
     }
 
 
@@ -331,12 +343,23 @@ def build_weekly_review_context(*, framework_id: str, as_of: date | None = None)
     limited_tracked = tracked[:MAX_CONTEXT_SYMBOLS]
     intel = _collect_symbol_intel(limited_tracked)
     dossiers = _collect_research_dossier_summaries(clean_framework, limited_tracked)
+    data_gaps = _weekly_data_gaps(daily_records, tracked, intel, dossiers, framework_id=clean_framework)
     research_engine = _build_research_engine_context(
         framework_id=clean_framework,
         snapshot=us_snapshot,
         symbol_intel=intel,
         research_dossiers=dossiers,
         market_data={},
+        as_of=target_date,
+    )
+    operation_framework = _build_operation_framework_context(
+        framework_id=clean_framework,
+        market="ALL",
+        workflow_type="weekly",
+        tracked_symbols=[asdict(item) for item in tracked],
+        research_engine=research_engine,
+        market_data={},
+        data_gaps=data_gaps,
         as_of=target_date,
     )
 
@@ -358,11 +381,12 @@ def build_weekly_review_context(*, framework_id: str, as_of: date | None = None)
         "symbol_intel": intel,
         "research_dossiers": dossiers,
         "research_engine": research_engine,
+        "operation_framework": operation_framework,
         "daily_records": _compact_records(daily_records, include_context=False),
         "record_counts": _record_counts(daily_records),
         "optional_data_notes": _research_dossier_notes(dossiers),
         "instructions": _workflow_instructions(clean_framework, "ALL", "weekly"),
-        "data_gaps": _weekly_data_gaps(daily_records, tracked, intel, dossiers, framework_id=clean_framework),
+        "data_gaps": data_gaps,
     }
 
 
@@ -721,6 +745,38 @@ def _build_research_engine_context(
             "error": str(exc),
         }
     return report
+
+
+def _build_operation_framework_context(
+    *,
+    framework_id: str,
+    market: str,
+    workflow_type: str,
+    tracked_symbols: list[dict[str, Any]],
+    research_engine: dict[str, Any],
+    market_data: dict[str, Any],
+    data_gaps: list[str],
+    as_of: date,
+) -> dict[str, Any]:
+    from src.operation_plan import build_operation_framework_report
+
+    try:
+        return build_operation_framework_report(
+            framework_id=framework_id,
+            market=market,
+            workflow_type=workflow_type,
+            tracked_symbols=tracked_symbols,
+            research_engine=research_engine,
+            market_data=market_data,
+            data_gaps=data_gaps,
+            as_of=as_of,
+        )
+    except Exception as exc:
+        return {
+            "status": "error",
+            "engine": "operation_framework",
+            "error": str(exc),
+        }
 
 
 def _attach_longbridge_growth_universe(snapshot: dict[str, Any]) -> dict[str, Any]:

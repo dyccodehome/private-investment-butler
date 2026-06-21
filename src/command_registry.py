@@ -92,6 +92,13 @@ COMMAND_REGISTRY: list[CommandDef] = [
         aliases=("growth-radar", "research-signals"),
         args_hint="[limit=<n>]",
     ),
+    CommandDef(
+        "operation-plan",
+        "生成 Growth_Engine Action Permission 和 Operation Plan 备忘录",
+        "Growth",
+        aliases=("op-plan", "action-plan"),
+        args_hint="[limit=<n>]",
+    ),
     CommandDef("growth-snapshot", "查看 Growth_Engine 本地遗留快照", "Growth", args_hint="[market=US]"),
     CommandDef("growth-review", "按 Growth_Engine 框架复盘单个持仓或自选标的", "Growth", args_hint="<symbol>"),
     CommandDef(
@@ -173,6 +180,7 @@ def handle_command(raw_text: str, chat_id: str) -> str | None:
         "cash-watchlist": _handle_cash_watchlist,
         "growth-universe": _handle_growth_universe,
         "research-radar": _handle_research_radar,
+        "operation-plan": _handle_operation_plan,
         "growth-snapshot": _handle_growth_snapshot,
         "growth-review": _handle_growth_review,
         "sync": _handle_sync,
@@ -213,6 +221,7 @@ def help_text() -> str:
         "/sync longbridge - 读取长桥持仓并生成同步提案",
         "/sync longbridge growth - 读取长桥并生成 Growth Engine 美股 universe",
         "/research-radar [limit=<n>] - 生成 Growth Engine 投研雷达和 Research Signals",
+        "/operation-plan [limit=<n>] - 生成 Growth Engine Action Permission 和 Operation Plan",
         "/sync longbridge watchlist - 读取长桥自选股并按 Cash/Growth 分类",
         "/sync longbridge dividends [start=YYYY-MM-DD] [end=YYYY-MM-DD] - 同步长桥美元分配到账和历史分配",
         "/apply longbridge cash_anchor - 确认后把长桥 QQQI/XQQI/TQQQ 写入 Cash Anchor 账本",
@@ -750,6 +759,38 @@ def _handle_research_radar(args: str, chat_id: str) -> str:
     except RuntimeError as exc:
         return str(exc)
     return format_growth_research_report(report)
+
+
+def _handle_operation_plan(args: str, chat_id: str) -> str:
+    from src.operation_plan import build_operation_framework_report, format_operation_framework_report
+    from src.research_engine import build_growth_research_report
+
+    parsed = _parse_key_values(args)
+    limit = _optional_int(parsed.get("limit")) or 12
+    try:
+        research_report = build_growth_research_report(max_symbols=limit)
+    except RuntimeError as exc:
+        return str(exc)
+    tracked_symbols = [
+        {
+            "symbol": item.get("ticker"),
+            "name": item.get("name"),
+            "market": "US",
+            "source": "holding" if item.get("has_position") else "longbridge_growth_universe",
+        }
+        for item in research_report.get("research_signals") or []
+        if isinstance(item, dict)
+    ]
+    report = build_operation_framework_report(
+        framework_id="Growth_Engine",
+        market="US",
+        workflow_type="manual",
+        tracked_symbols=tracked_symbols,
+        research_engine=research_report,
+        market_data={},
+        data_gaps=list((research_report.get("data_quality") or {}).get("limitations") or []),
+    )
+    return format_operation_framework_report(report)
 
 
 def _handle_apply(args: str, chat_id: str) -> str:

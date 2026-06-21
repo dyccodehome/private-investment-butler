@@ -141,6 +141,8 @@ class ScheduledReviewTest(unittest.TestCase):
         self.assertIn("research_dossiers", context)
         self.assertEqual(context["research_engine"]["engine"], "growth_research_mvp")
         self.assertEqual(context["research_engine"]["research_signals"][0]["ticker"], "NVDA.US")
+        self.assertEqual(context["operation_framework"]["engine"], "operation_framework")
+        self.assertEqual(context["operation_framework"]["operation_plans"][0]["ticker"], "NVDA.US")
 
     def test_weekly_context_reads_past_week_daily_records(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -205,6 +207,7 @@ class ScheduledReviewTest(unittest.TestCase):
         self.assertIn("本周日报", context["daily_records"][0]["result"])
         self.assertEqual(context["tracked_symbols"][0]["symbol"], "NVDA.US")
         self.assertEqual(context["research_engine"]["engine"], "growth_research_mvp")
+        self.assertEqual(context["operation_framework"]["engine"], "operation_framework")
 
     def test_growth_us_context_uses_longbridge_non_cash_positions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

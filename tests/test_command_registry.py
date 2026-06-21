@@ -32,6 +32,7 @@ class CommandRegistryTest(unittest.TestCase):
         self.assertIn("/sync longbridge dividends", text)
         self.assertIn("/growth-universe", text)
         self.assertIn("/research-radar", text)
+        self.assertIn("/operation-plan", text)
         self.assertIn("/growth-review", text)
         self.assertIn("/absorb", text)
         self.assertIn("/dossier-refresh", text)
@@ -407,6 +408,38 @@ class CommandRegistryTest(unittest.TestCase):
         self.assertIsNotNone(reply)
         self.assertIn("Growth Engine 投研雷达", reply or "")
         self.assertIn("NVDA.US", reply or "")
+        self.assertEqual(build_report.call_args.kwargs["max_symbols"], 5)
+
+    @patch("src.research_engine.build_growth_research_report")
+    def test_operation_plan_command_uses_operation_framework(self, build_report) -> None:
+        build_report.return_value = {
+            "as_of": "2026-06-16",
+            "universe_count": 1,
+            "analyzed_symbol_count": 1,
+            "data_quality": {"status": "ok", "limitations": []},
+            "theme_radar": [],
+            "research_signals": [
+                {
+                    "ticker": "NVDA.US",
+                    "name": "NVIDIA",
+                    "has_position": True,
+                    "asset_type": "stock",
+                    "thesis_impact": "strengthened",
+                    "valuation_view": "above_ma120",
+                    "risk_level": "medium",
+                    "evidence_strength": "high",
+                    "suggested_status": "add_condition_review",
+                }
+            ],
+            "deep_research_queue": [],
+        }
+
+        reply = handle_command("/operation-plan limit=5", "cli")
+
+        self.assertIsNotNone(reply)
+        self.assertIn("Operation Framework", reply or "")
+        self.assertIn("NVDA.US", reply or "")
+        self.assertIn("add_plan_candidate", reply or "")
         self.assertEqual(build_report.call_args.kwargs["max_symbols"], 5)
 
     @patch("src.research_dossier.refresh_dossier_facts")

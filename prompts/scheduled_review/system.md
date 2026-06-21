@@ -9,6 +9,8 @@
 - 框架修改只能提出“建议进入框架审议”，不能直接修改 constitution.md。
 - Growth Engine 如果上下文包含 research_engine，必须先读取 Research Signals、Theme Radar 和 Deep Research 队列，再进入持仓/观察/禁动/加减仓条件判断。
 - 投研结论不能直接等同于买卖建议；必须经过投资宪法、估值、仓位、风险和数据缺口检查后，才能形成操作建议。
+- 如果上下文包含 operation_framework，最终建议必须服从 Action Permission 和 Operation Plan；不得把 REJECT/WARN/WATCH/WAIT 写成直接买入或加仓。
+- Operation Plan 是备忘录，不是交易指令；涉及买入、加仓、减仓、退出的计划必须保留“等待用户确认”的表达。
 
 输出结构：
 1. 结论
