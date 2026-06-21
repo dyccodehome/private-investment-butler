@@ -71,6 +71,7 @@ def format_scheduled_health(summary: dict[str, Any], *, limit: int = MAX_RECENT_
         f"- tracked_symbol_count=0：{len(reports.get('zero_tracked_records') or [])}",
         f"- 长桥相关数据缺口：{len(reports.get('longbridge_gap_records') or [])}",
         f"- US/ALL 报告缺 account_activity：{len(reports.get('records_missing_account_activity') or [])}",
+        f"- US/ALL 报告缺 longbridge_market_context：{len(reports.get('records_missing_longbridge_market_context') or [])}",
         f"- Growth 报告缺 research_engine：{len(reports.get('growth_records_missing_research_engine') or [])}",
         f"- Growth 报告缺 operation_framework：{len(reports.get('growth_records_missing_operation_framework') or [])}",
     ]
@@ -144,6 +145,7 @@ def _summarize_reports(records: list[dict[str, Any]]) -> dict[str, Any]:
     missing_research: list[dict[str, Any]] = []
     missing_operation: list[dict[str, Any]] = []
     missing_account_activity: list[dict[str, Any]] = []
+    missing_market_context: list[dict[str, Any]] = []
     empty_results: list[dict[str, Any]] = []
 
     for record in _sort_by_created_at(records, reverse=True):
@@ -158,6 +160,8 @@ def _summarize_reports(records: list[dict[str, Any]]) -> dict[str, Any]:
             longbridge_gaps.append(brief)
         if str(record.get("market") or "") in {"US", "ALL"} and not _has_account_activity_context(context):
             missing_account_activity.append(brief)
+        if str(record.get("market") or "") in {"US", "ALL"} and not _has_longbridge_market_context(context):
+            missing_market_context.append(brief)
         if str(record.get("framework_id") or "") == "Growth_Engine":
             if not isinstance(context.get("research_engine"), dict):
                 missing_research.append(brief)
@@ -174,6 +178,7 @@ def _summarize_reports(records: list[dict[str, Any]]) -> dict[str, Any]:
         "zero_tracked_records": zero_tracked[:MAX_RECENT_ITEMS],
         "longbridge_gap_records": longbridge_gaps[:MAX_RECENT_ITEMS],
         "records_missing_account_activity": missing_account_activity[:MAX_RECENT_ITEMS],
+        "records_missing_longbridge_market_context": missing_market_context[:MAX_RECENT_ITEMS],
         "growth_records_missing_research_engine": missing_research[:MAX_RECENT_ITEMS],
         "growth_records_missing_operation_framework": missing_operation[:MAX_RECENT_ITEMS],
         "empty_result_records": empty_results[:MAX_RECENT_ITEMS],
@@ -213,6 +218,9 @@ def _build_findings(runs: dict[str, Any], reports: dict[str, Any]) -> list[str]:
     missing_account = len(reports.get("records_missing_account_activity") or [])
     if missing_account:
         findings.append(f"最近 US/ALL 报告中有 {missing_account} 条没有 account_activity；账户/成交接入后的新报告应包含该字段。")
+    missing_market = len(reports.get("records_missing_longbridge_market_context") or [])
+    if missing_market:
+        findings.append(f"最近 US/ALL 报告中有 {missing_market} 条没有 longbridge_market_context；行情接入后的新报告应包含该字段。")
     missing_research = len(reports.get("growth_records_missing_research_engine") or [])
     if missing_research:
         findings.append(f"最近 Growth 报告中有 {missing_research} 条没有 research_engine 字段；投研层上线后的新报告应包含该字段。")
@@ -331,6 +339,13 @@ def _has_account_activity_context(context: dict[str, Any]) -> bool:
     if isinstance(by_market, dict) and by_market:
         return any(isinstance(item, dict) and item for item in by_market.values())
     return False
+
+
+def _has_longbridge_market_context(context: dict[str, Any]) -> bool:
+    market_context = context.get("longbridge_market_context")
+    if not isinstance(market_context, dict) or not market_context:
+        return False
+    return bool(market_context.get("symbol_data") or market_context.get("status") in {"empty", "not_applicable"})
 
 
 def _format_counter(counter: dict[str, Any]) -> str:

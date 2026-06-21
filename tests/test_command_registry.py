@@ -33,6 +33,7 @@ class CommandRegistryTest(unittest.TestCase):
         self.assertIn("/sync longbridge dividends", text)
         self.assertIn("/longbridge-health", text)
         self.assertIn("/longbridge-account", text)
+        self.assertIn("/longbridge-market", text)
         self.assertIn("/growth-universe", text)
         self.assertIn("/research-radar", text)
         self.assertIn("/operation-plan", text)
@@ -329,6 +330,23 @@ class CommandRegistryTest(unittest.TestCase):
 
         self.assertIsNotNone(reply)
         self.assertIn("日期格式不对", reply or "")
+
+    @patch("src.longbridge_quote_provider.format_market_context_snapshot")
+    @patch("src.longbridge_quote_provider.build_market_context_snapshot")
+    def test_longbridge_market_command_uses_quote_provider(self, build_snapshot, format_snapshot) -> None:
+        build_snapshot.return_value = {"status": "ok"}
+        format_snapshot.return_value = "行情快照"
+
+        reply = handle_command("/longbridge-market symbol=nvda.us,msft.us market=us kline_limit=2 timeout=3", "cli")
+
+        self.assertEqual(reply, "行情快照")
+        build_snapshot.assert_called_once()
+        kwargs = build_snapshot.call_args.kwargs
+        self.assertEqual(kwargs["symbols"], ["NVDA.US", "MSFT.US"])
+        self.assertEqual(kwargs["market"], "us")
+        self.assertEqual(kwargs["kline_symbol_limit"], 2)
+        self.assertEqual(kwargs["timeout_seconds"], 3)
+        format_snapshot.assert_called_once_with({"status": "ok"})
 
     @patch("src.longbridge_provider.apply_longbridge_cash_anchor_sync")
     def test_apply_longbridge_uses_provider(self, apply_sync) -> None:

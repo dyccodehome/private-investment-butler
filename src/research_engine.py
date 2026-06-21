@@ -221,6 +221,7 @@ def build_growth_research_report(
     industry_mapper = _build_industry_mapper(signals)
     deep_research_queue = _build_deep_research_queue(signals, dossiers)
     data_gaps = _data_gaps(payload, items, intel, dossiers)
+    market_context_summary = _market_context_summary(market)
 
     return {
         "schema_version": 1,
@@ -235,6 +236,7 @@ def build_growth_research_report(
         "industry_mapper": [asdict(item) for item in industry_mapper],
         "research_signals": [asdict(item) for item in signals],
         "deep_research_queue": [asdict(item) for item in deep_research_queue],
+        "market_context_summary": market_context_summary,
         "data_quality": {
             "status": "has_gaps" if data_gaps else "ok",
             "limitations": data_gaps,
@@ -538,6 +540,29 @@ def _data_gaps(
         elif (dossier.get("freshness") or {}).get("stale"):
             gaps.append(f"{symbol} 研究档案已过期。")
     return _dedupe(gaps)
+
+
+def _market_context_summary(market_data: dict[str, Any]) -> dict[str, Any]:
+    longbridge_count = 0
+    quote_count = 0
+    ma120_count = 0
+    for payload in market_data.values():
+        if not isinstance(payload, dict):
+            continue
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        snapshot = data.get("longbridge_market_snapshot") if isinstance(data.get("longbridge_market_snapshot"), dict) else {}
+        if snapshot:
+            longbridge_count += 1
+        if data.get("current_price"):
+            quote_count += 1
+        if data.get("MA120") or data.get("ma120"):
+            ma120_count += 1
+    return {
+        "symbols_with_market_data": len(market_data),
+        "symbols_with_longbridge_market_snapshot": longbridge_count,
+        "symbols_with_quote": quote_count,
+        "symbols_with_ma120": ma120_count,
+    }
 
 
 def _combined_text(item: dict[str, Any], intel_payload: dict[str, Any], dossier_payload: dict[str, Any]) -> str:

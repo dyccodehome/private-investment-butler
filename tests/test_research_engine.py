@@ -62,7 +62,18 @@ class ResearchEngineTest(unittest.TestCase):
                     "freshness": {"stale": False},
                 },
             },
-            market_data={},
+            market_data={
+                "NVDA.US": {
+                    "status": "ok",
+                    "data": {
+                        "current_price": 120,
+                        "MA120": 100,
+                        "longbridge_market_snapshot": {
+                            "technical": {"ma120": 100, "ma120_relation": "above_ma120"},
+                        },
+                    },
+                }
+            },
             as_of=date(2026, 6, 16),
             fetch_missing_context=False,
         )
@@ -72,6 +83,9 @@ class ResearchEngineTest(unittest.TestCase):
         signals = {item["ticker"]: item for item in report["research_signals"]}
         self.assertEqual(signals["NVDA.US"]["theme_id"], "ai_compute")
         self.assertEqual(signals["NVDA.US"]["thesis_impact"], "strengthened")
+        self.assertEqual(signals["NVDA.US"]["valuation_view"], "above_ma120")
+        self.assertEqual(report["market_context_summary"]["symbols_with_ma120"], 1)
+        self.assertEqual(report["market_context_summary"]["symbols_with_longbridge_market_snapshot"], 1)
         self.assertTrue(report["theme_radar"])
         queue = {item["ticker"]: item for item in report["deep_research_queue"]}
         self.assertEqual(queue["NET.US"]["suggested_action"], "create_dossier")

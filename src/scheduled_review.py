@@ -275,9 +275,11 @@ def build_daily_review_context(
     latest_weekly = read_recent_weekly_reviews(clean_framework, before=target_date + timedelta(days=1), limit=1)
     limited_tracked = tracked[:MAX_CONTEXT_SYMBOLS]
     market_data = _collect_market_data(limited_tracked)
+    longbridge_market_context = _build_longbridge_market_context(clean_market, limited_tracked, target_date)
+    market_data = _merge_longbridge_market_context(market_data, longbridge_market_context)
     intel = _collect_symbol_intel(limited_tracked)
     dossiers = _collect_research_dossier_summaries(clean_framework, limited_tracked)
-    data_gaps = _daily_data_gaps(snapshot, tracked, market_data, intel, dossiers)
+    data_gaps = _daily_data_gaps(snapshot, tracked, market_data, intel, dossiers, longbridge_market_context)
     research_engine = _build_research_engine_context(
         framework_id=clean_framework,
         snapshot=snapshot,
@@ -312,6 +314,7 @@ def build_daily_review_context(
         "tracked_symbols": [asdict(item) for item in tracked],
         "context_symbol_limit": MAX_CONTEXT_SYMBOLS,
         "market_data": market_data,
+        "longbridge_market_context": longbridge_market_context,
         "symbol_intel": intel,
         "research_dossiers": dossiers,
         "research_engine": research_engine,
@@ -345,15 +348,24 @@ def build_weekly_review_context(*, framework_id: str, as_of: date | None = None)
         tracked_source = _tracked_symbols_from_snapshot(clean_framework, cn_snapshot) + tracked_source
     tracked = _dedupe_tracked(tracked_source)
     limited_tracked = tracked[:MAX_CONTEXT_SYMBOLS]
+    longbridge_market_context = _build_longbridge_market_context("US", limited_tracked, target_date)
+    market_data = _merge_longbridge_market_context({}, longbridge_market_context)
     intel = _collect_symbol_intel(limited_tracked)
     dossiers = _collect_research_dossier_summaries(clean_framework, limited_tracked)
-    data_gaps = _weekly_data_gaps(daily_records, tracked, intel, dossiers, framework_id=clean_framework)
+    data_gaps = _weekly_data_gaps(
+        daily_records,
+        tracked,
+        intel,
+        dossiers,
+        framework_id=clean_framework,
+        longbridge_market_context=longbridge_market_context,
+    )
     research_engine = _build_research_engine_context(
         framework_id=clean_framework,
         snapshot=us_snapshot,
         symbol_intel=intel,
         research_dossiers=dossiers,
-        market_data={},
+        market_data=market_data,
         as_of=target_date,
     )
     operation_framework = _build_operation_framework_context(
@@ -362,7 +374,7 @@ def build_weekly_review_context(*, framework_id: str, as_of: date | None = None)
         workflow_type="weekly",
         tracked_symbols=[asdict(item) for item in tracked],
         research_engine=research_engine,
-        market_data={},
+        market_data=market_data,
         data_gaps=data_gaps,
         as_of=target_date,
     )
@@ -383,6 +395,8 @@ def build_weekly_review_context(*, framework_id: str, as_of: date | None = None)
         "account_activity_by_market": account_activity_by_market,
         "tracked_symbols": [asdict(item) for item in tracked],
         "context_symbol_limit": MAX_CONTEXT_SYMBOLS,
+        "market_data": market_data,
+        "longbridge_market_context": longbridge_market_context,
         "symbol_intel": intel,
         "research_dossiers": dossiers,
         "research_engine": research_engine,
@@ -645,6 +659,83 @@ def _collect_market_data(symbols: list[TrackedSymbol]) -> dict[str, Any]:
                 "error": str(exc),
             }
     return result
+
+
+def _build_longbridge_market_context(market: str, symbols: list[TrackedSymbol], as_of: date) -> dict[str, Any]:
+    if market not in {"US", "ALL"}:
+        return {
+            "status": "not_applicable",
+            "reason": "长桥行情上下文当前只接入 US/ALL 定时复盘。",
+            "symbol_data": {},
+        }
+    us_symbols = [item.symbol for item in symbols if item.market == "US"]
+    if not us_symbols:
+        return {
+            "status": "empty",
+            "reason": "没有 US 标的需要读取长桥行情上下文。",
+            "symbol_data": {},
+        }
+    try:
+        from src.longbridge_quote_provider import build_market_context_snapshot
+
+        return build_market_context_snapshot(symbols=us_symbols, market="US", as_of=as_of)
+    except Exception as exc:
+        return {
+            "source": "longbridge_cli",
+            "scope": "market_context_snapshot",
+            "status": "error",
+            "error": str(exc),
+            "symbol_data": {},
+            "data_quality": {
+                "status": "error",
+                "limitations": [str(exc)],
+            },
+            "write_policy": "read_only_market_data",
+        }
+
+
+def _merge_longbridge_market_context(
+    market_data: dict[str, Any],
+    longbridge_market_context: dict[str, Any],
+) -> dict[str, Any]:
+    symbol_data = longbridge_market_context.get("symbol_data")
+    if not isinstance(symbol_data, dict) or not symbol_data:
+        return market_data
+    merged = {symbol: dict(payload) for symbol, payload in market_data.items()}
+    for symbol, payload in symbol_data.items():
+        if not isinstance(payload, dict):
+            continue
+        quote = payload.get("quote") if isinstance(payload.get("quote"), dict) else {}
+        technical = payload.get("technical") if isinstance(payload.get("technical"), dict) else {}
+        existing = dict(merged.get(symbol) or {})
+        data = dict(existing.get("data") or {})
+        if quote.get("current_price") and not data.get("current_price"):
+            data["current_price"] = quote.get("current_price")
+        for source_key, target_key in (
+            ("ma20", "MA20"),
+            ("ma50", "MA50"),
+            ("ma120", "MA120"),
+            ("latest_close", "latest_close"),
+            ("ma120_relation", "ma120_relation"),
+        ):
+            if technical.get(source_key) not in (None, ""):
+                data[target_key] = technical.get(source_key)
+        data["longbridge_market_snapshot"] = {
+            "quote": quote,
+            "technical": technical,
+            "kline_preview": payload.get("kline_preview") or [],
+        }
+        if not existing:
+            existing = {
+                "status": "ok",
+                "source": "longbridge_market_context",
+                "market": "US",
+                "symbol": symbol,
+                "error": "",
+            }
+        existing["data"] = data
+        merged[symbol] = existing
+    return merged
 
 
 def _collect_symbol_intel(symbols: list[TrackedSymbol]) -> dict[str, Any]:
@@ -1118,6 +1209,7 @@ def _daily_data_gaps(
     market_data: dict[str, Any],
     intel: dict[str, Any],
     dossiers: dict[str, Any],
+    longbridge_market_context: dict[str, Any] | None = None,
 ) -> list[str]:
     gaps: list[str] = []
     if not tracked:
@@ -1134,6 +1226,7 @@ def _daily_data_gaps(
     if isinstance(account_activity, dict) and account_activity.get("status") == "partial":
         for item in (account_activity.get("data_quality") or {}).get("limitations") or []:
             gaps.append(f"长桥账户/成交只读快照部分缺失：{item}")
+    gaps.extend(_longbridge_market_context_gaps(longbridge_market_context))
     for symbol, payload in market_data.items():
         if payload.get("status") != "ok":
             gaps.append(f"{symbol} 行情不可用：{payload.get('error') or payload.get('status')}")
@@ -1156,6 +1249,7 @@ def _weekly_data_gaps(
     dossiers: dict[str, Any],
     *,
     framework_id: str,
+    longbridge_market_context: dict[str, Any] | None = None,
 ) -> list[str]:
     gaps: list[str] = []
     if not daily_records:
@@ -1167,6 +1261,7 @@ def _weekly_data_gaps(
     for market in required_markets:
         if market not in markets:
             gaps.append(f"过去一周缺少 {market} 日报记录。")
+    gaps.extend(_longbridge_market_context_gaps(longbridge_market_context))
     for symbol, payload in intel.items():
         news = payload.get("news") or {}
         announcements = payload.get("announcements") or {}
@@ -1177,6 +1272,19 @@ def _weekly_data_gaps(
         if payload.get("exists") and freshness.get("stale"):
             gaps.append(f"{symbol} 研究档案可能过期：{freshness.get('stale_reason') or 'stale'}")
     return _dedupe_text(gaps)
+
+
+def _longbridge_market_context_gaps(context: dict[str, Any] | None) -> list[str]:
+    if not isinstance(context, dict) or context.get("status") in {"not_applicable", "empty"}:
+        return []
+    if context.get("status") == "error":
+        return [f"长桥行情只读快照读取失败：{context.get('error') or 'unknown'}"]
+    quality = context.get("data_quality") if isinstance(context.get("data_quality"), dict) else {}
+    gaps = [f"长桥行情只读快照部分缺失：{item}" for item in quality.get("limitations") or []]
+    summary = context.get("summary") if isinstance(context.get("summary"), dict) else {}
+    if context.get("symbols") and summary.get("quote_count", 0) == 0:
+        gaps.append("长桥行情只读快照没有返回可用 quote。")
+    return gaps
 
 
 def _research_dossier_notes(dossiers: dict[str, Any]) -> list[str]:

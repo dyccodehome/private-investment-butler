@@ -77,17 +77,18 @@ class MarketDataTest(unittest.TestCase):
         yahoo.assert_called_once_with("QQQI", market="US")
 
     def test_longbridge_market_provider_wraps_quote(self) -> None:
-        from src.longbridge_provider import LongbridgeQuote
         from src.market_data.longbridge_market_provider import fetch_longbridge_quote
 
-        with patch("src.market_data.longbridge_market_provider.fetch_longbridge_quotes") as fetch_quotes:
+        with patch("src.market_data.longbridge_market_provider.fetch_realtime_quotes") as fetch_quotes:
             fetch_quotes.return_value = {
-                "QQQI.US": LongbridgeQuote(
-                    symbol="QQQI.US",
-                    current_price=57.12,
-                    quote_source="last",
-                    timestamp="",
-                )
+                "data": {
+                    "QQQI.US": {
+                        "symbol": "QQQI.US",
+                        "current_price": 57.12,
+                        "quote_source": "last",
+                        "timestamp": "",
+                    }
+                }
             }
             result = fetch_longbridge_quote("QQQI")
 

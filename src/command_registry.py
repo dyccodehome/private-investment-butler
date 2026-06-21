@@ -121,6 +121,13 @@ COMMAND_REGISTRY: list[CommandDef] = [
         aliases=("lb-account",),
         args_hint="[days=<n>] [symbol=<code>] [currency=USD] [profit=true]",
     ),
+    CommandDef(
+        "longbridge-market",
+        "读取长桥行情、K线、市场状态和交易日历只读快照",
+        "Ledger",
+        aliases=("lb-market",),
+        args_hint="symbol=<code>[,<code>] [market=US] [kline_limit=6] [timeout=<seconds>]",
+    ),
     CommandDef("apply", "确认并写入外部同步结果；当前支持 longbridge cash_anchor", "Ledger", args_hint="longbridge cash_anchor"),
     CommandDef(
         "absorb",
@@ -207,6 +214,7 @@ def handle_command(raw_text: str, chat_id: str) -> str | None:
         "sync": _handle_sync,
         "longbridge-health": _handle_longbridge_health,
         "longbridge-account": _handle_longbridge_account,
+        "longbridge-market": _handle_longbridge_market,
         "apply": _handle_apply,
         "absorb": _handle_absorb,
         "dossier-refresh": _handle_dossier_refresh,
@@ -250,6 +258,7 @@ def help_text() -> str:
         "/sync longbridge dividends [start=YYYY-MM-DD] [end=YYYY-MM-DD] - 同步长桥美元分配到账和历史分配",
         "/longbridge-health [cli=false] [network=false] [timeout=<seconds>] - 检查长桥只读接入健康状态",
         "/longbridge-account [days=<n>] [symbol=<code>] [currency=USD] [profit=true] - 读取长桥账户和成交只读快照",
+        "/longbridge-market symbol=NVDA.US,MSFT.US [market=US] [kline_limit=6] - 读取长桥行情和市场状态只读快照",
         "/apply longbridge cash_anchor - 确认后把长桥 QQQI/XQQI/TQQQ 写入 Cash Anchor 账本",
         "",
         "Growth Engine：",
@@ -818,6 +827,29 @@ def _handle_longbridge_account(args: str, chat_id: str) -> str:
     return format_account_activity_snapshot(snapshot)
 
 
+def _handle_longbridge_market(args: str, chat_id: str) -> str:
+    from src.longbridge_quote_provider import build_market_context_snapshot, format_market_context_snapshot
+
+    parsed = _parse_key_values(args)
+    symbols = _parse_symbol_list(parsed.get("symbol") or parsed.get("symbols") or args)
+    if not symbols:
+        return "请提供 symbol，例如：/longbridge-market symbol=NVDA.US,MSFT.US market=US"
+    timeout = _optional_int(parsed.get("timeout")) or 15
+    kline_limit = _optional_int(parsed.get("kline_limit") or parsed.get("kline_symbols")) or 6
+    quote_limit = _optional_int(parsed.get("quote_limit") or parsed.get("limit")) or 30
+    try:
+        snapshot = build_market_context_snapshot(
+            symbols=symbols,
+            market=parsed.get("market") or "US",
+            quote_symbol_limit=quote_limit,
+            kline_symbol_limit=kline_limit,
+            timeout_seconds=timeout,
+        )
+    except (RuntimeError, ValueError) as exc:
+        return str(exc)
+    return format_market_context_snapshot(snapshot)
+
+
 def _handle_research_radar(args: str, chat_id: str) -> str:
     from src.research_engine import build_growth_research_report, format_growth_research_report
 
@@ -918,6 +950,17 @@ def _parse_key_values(args: str) -> dict[str, str]:
             continue
         key, value = part.split("=", 1)
         result[key.strip().lower().replace("-", "_")] = value.strip()
+    return result
+
+
+def _parse_symbol_list(value: str) -> list[str]:
+    result: list[str] = []
+    for raw in str(value or "").replace(",", " ").split():
+        if "=" in raw or _is_feishu_mention_token(raw):
+            continue
+        clean = raw.strip().upper()
+        if clean and clean not in result:
+            result.append(clean)
     return result
 
 

@@ -80,6 +80,7 @@ class ScheduledHealthTest(unittest.TestCase):
         self.assertEqual(len(summary["reports"]["zero_tracked_records"]), 1)
         self.assertEqual(len(summary["reports"]["longbridge_gap_records"]), 1)
         self.assertEqual(len(summary["reports"]["records_missing_account_activity"]), 1)
+        self.assertEqual(len(summary["reports"]["records_missing_longbridge_market_context"]), 1)
         self.assertEqual(len(summary["reports"]["growth_records_missing_research_engine"]), 1)
         self.assertEqual(len(summary["reports"]["growth_records_missing_operation_framework"]), 1)
         self.assertTrue(any("长桥" in item for item in summary["findings"]))
@@ -114,6 +115,7 @@ class ScheduledHealthTest(unittest.TestCase):
                 ],
                 "longbridge_gap_records": [{}],
                 "records_missing_account_activity": [{}],
+                "records_missing_longbridge_market_context": [{}],
                 "growth_records_missing_research_engine": [{}],
                 "growth_records_missing_operation_framework": [{}],
                 "top_data_gaps": [{"gap": "长桥 Growth US universe 读取失败", "count": 1}],
@@ -128,6 +130,7 @@ class ScheduledHealthTest(unittest.TestCase):
         self.assertIn("最近失败任务", text)
         self.assertIn("空标的报告", text)
         self.assertIn("US/ALL 报告缺 account_activity：1", text)
+        self.assertIn("US/ALL 报告缺 longbridge_market_context：1", text)
         self.assertIn("长桥 Growth US universe", text)
 
 

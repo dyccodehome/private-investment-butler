@@ -24,6 +24,18 @@ class LongbridgeCapabilitiesTest(unittest.TestCase):
         capability = assert_longbridge_command_allowed(["longbridge", "order", "executions", "--history", "--format", "json"])
         self.assertEqual(capability.capability_id, "execution_history")
 
+        capability = assert_longbridge_command_allowed(["longbridge", "kline", "NVDA.US", "--period", "day", "--format", "json"])
+        self.assertEqual(capability.capability_id, "candles")
+
+        capability = assert_longbridge_command_allowed(["longbridge", "market-status", "--format", "json"])
+        self.assertEqual(capability.capability_id, "market_state")
+
+        capability = assert_longbridge_command_allowed(["longbridge", "trading", "days", "US", "--format", "json"])
+        self.assertEqual(capability.capability_id, "trading_calendar")
+
+        capability = assert_longbridge_command_allowed(["longbridge", "market-temp", "US", "--format", "json"])
+        self.assertEqual(capability.capability_id, "market_temperature")
+
     def test_denies_trading_write_commands(self) -> None:
         with self.assertRaises(PermissionError):
             assert_longbridge_command_allowed(["longbridge", "submit-order", "NVDA.US"])
@@ -40,6 +52,7 @@ class LongbridgeCapabilitiesTest(unittest.TestCase):
 
     def test_read_capability_requires_implemented_provider_by_default(self) -> None:
         self.assertEqual(assert_read_capability("positions").capability_id, "positions")
+        self.assertEqual(assert_read_capability("candles").capability_id, "candles")
         with self.assertRaises(PermissionError):
             assert_read_capability("fundamentals")
         self.assertEqual(assert_read_capability("fundamentals", require_implemented=False).capability_id, "fundamentals")

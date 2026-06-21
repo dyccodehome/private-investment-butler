@@ -63,8 +63,11 @@ class ScheduledReviewTest(unittest.TestCase):
                 "src.research_dossier.build_research_dossier_snapshot"
             ) as dossier_snapshot, patch(
                 "src.longbridge_account_provider.build_account_activity_snapshot"
-            ) as account_snapshot:
+            ) as account_snapshot, patch(
+                "src.longbridge_quote_provider.build_market_context_snapshot"
+            ) as market_context:
                 account_snapshot.return_value = _account_activity()
+                market_context.return_value = _market_context()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-04",
                     "market_filter": "US",
@@ -143,7 +146,10 @@ class ScheduledReviewTest(unittest.TestCase):
         self.assertIn("symbol_intel", context)
         self.assertIn("research_dossiers", context)
         self.assertEqual(context["account_activity"]["summary"]["execution_count"], 1)
+        self.assertEqual(context["longbridge_market_context"]["summary"]["quote_count"], 1)
+        self.assertEqual(context["market_data"]["NVDA.US"]["data"]["MA120"], 100)
         self.assertEqual(context["research_engine"]["engine"], "growth_research_mvp")
+        self.assertEqual(context["research_engine"]["market_context_summary"]["symbols_with_ma120"], 1)
         self.assertEqual(context["research_engine"]["research_signals"][0]["ticker"], "NVDA.US")
         self.assertEqual(context["operation_framework"]["engine"], "operation_framework")
         self.assertEqual(context["operation_framework"]["operation_plans"][0]["ticker"], "NVDA.US")
@@ -160,8 +166,11 @@ class ScheduledReviewTest(unittest.TestCase):
                 "src.market_intel.fetch_company_announcements"
             ) as fetch_announcements, patch("src.research_dossier.build_research_dossier_snapshot") as dossier_snapshot, patch(
                 "src.longbridge_account_provider.build_account_activity_snapshot"
-            ) as account_snapshot:
+            ) as account_snapshot, patch(
+                "src.longbridge_quote_provider.build_market_context_snapshot"
+            ) as market_context:
                 account_snapshot.return_value = _account_activity()
+                market_context.return_value = _market_context()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-07",
                     "market_filter": "US",
@@ -214,6 +223,7 @@ class ScheduledReviewTest(unittest.TestCase):
         self.assertIn("本周日报", context["daily_records"][0]["result"])
         self.assertEqual(context["tracked_symbols"][0]["symbol"], "NVDA.US")
         self.assertIn("US", context["account_activity_by_market"])
+        self.assertEqual(context["longbridge_market_context"]["summary"]["quote_count"], 1)
         self.assertEqual(context["research_engine"]["engine"], "growth_research_mvp")
         self.assertEqual(context["operation_framework"]["engine"], "operation_framework")
 
@@ -229,8 +239,11 @@ class ScheduledReviewTest(unittest.TestCase):
                 "src.market_intel.fetch_company_announcements"
             ) as fetch_announcements, patch("src.research_dossier.build_research_dossier_snapshot") as dossier_snapshot, patch(
                 "src.longbridge_account_provider.build_account_activity_snapshot"
-            ) as account_snapshot:
+            ) as account_snapshot, patch(
+                "src.longbridge_quote_provider.build_market_context_snapshot"
+            ) as market_context:
                 account_snapshot.return_value = _account_activity()
+                market_context.return_value = _market_context()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-04",
                     "market_filter": "US",
@@ -295,6 +308,7 @@ class ScheduledReviewTest(unittest.TestCase):
         self.assertEqual(context["tracked_symbols"][1]["source"], "longbridge_growth_universe")
         self.assertEqual(context["snapshot"]["summary"]["longbridge_growth_universe_count"], 2)
         self.assertEqual(context["snapshot"]["summary"]["longbridge_recent_execution_count"], 1)
+        self.assertIn("longbridge_market_snapshot", context["market_data"]["NVDA.US"]["data"])
 
     def test_missing_research_dossier_is_optional_note_not_data_gap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -310,8 +324,11 @@ class ScheduledReviewTest(unittest.TestCase):
                 "src.research_dossier.build_research_dossier_snapshot"
             ) as dossier_snapshot, patch(
                 "src.longbridge_account_provider.build_account_activity_snapshot"
-            ) as account_snapshot:
+            ) as account_snapshot, patch(
+                "src.longbridge_quote_provider.build_market_context_snapshot"
+            ) as market_context:
                 account_snapshot.return_value = _account_activity()
+                market_context.return_value = _market_context()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-04",
                     "market_filter": "US",
@@ -373,7 +390,10 @@ class ScheduledReviewTest(unittest.TestCase):
                 "src.market_intel.fetch_company_announcements"
             ) as fetch_announcements, patch("src.research_dossier.build_research_dossier_snapshot") as dossier_snapshot, patch(
                 "src.longbridge_account_provider.build_account_activity_snapshot"
-            ) as account_snapshot:
+            ) as account_snapshot, patch(
+                "src.longbridge_quote_provider.build_market_context_snapshot"
+            ) as market_context:
+                market_context.return_value = _market_context()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-04",
                     "market_filter": "US",
@@ -439,9 +459,12 @@ class ScheduledReviewTest(unittest.TestCase):
             ) as fetch_news, patch("src.market_intel.fetch_company_announcements") as fetch_announcements, patch(
                 "src.research_dossier.build_research_dossier_snapshot"
             ) as dossier_snapshot, patch("src.longbridge_account_provider.build_account_activity_snapshot") as account_snapshot, patch(
+                "src.longbridge_quote_provider.build_market_context_snapshot"
+            ) as market_context, patch(
                 "src.scheduled_review.LLMClient"
             ) as client_cls:
                 account_snapshot.return_value = _account_activity()
+                market_context.return_value = _market_context()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-04",
                     "market_filter": "US",
@@ -529,6 +552,45 @@ def _account_activity(status: str = "ok") -> dict:
         },
         "data_quality": {"source_chain": [], "limitations": []},
         "write_policy": "read_only_account_data; no order placement, amendment, or cancellation",
+    }
+
+
+def _market_context(status: str = "ok") -> dict:
+    return {
+        "source": "longbridge_cli",
+        "scope": "market_context_snapshot",
+        "as_of": "2026-06-04T08:00:00",
+        "market": "US",
+        "symbols": ["NVDA.US"],
+        "kline_symbols": ["NVDA.US"],
+        "summary": {
+            "symbol_count": 1,
+            "quote_count": 1,
+            "kline_symbol_count": 1,
+            "market_status_count": 1,
+            "trading_day_count": 5,
+        },
+        "symbol_data": {
+            "NVDA.US": {
+                "quote": {
+                    "symbol": "NVDA.US",
+                    "current_price": 120,
+                    "quote_source": "last",
+                    "timestamp": "",
+                },
+                "technical": {
+                    "latest_close": 120,
+                    "ma20": 110,
+                    "ma50": 105,
+                    "ma120": 100,
+                    "ma120_relation": "above_ma120",
+                    "kline_count": 140,
+                },
+                "kline_preview": [{"time": "2026-06-04", "close": 120}],
+            }
+        },
+        "data_quality": {"status": status, "limitations": []},
+        "write_policy": "read_only_market_data; no order placement, amendment, or cancellation",
     }
 
 
