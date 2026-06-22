@@ -83,6 +83,26 @@ class LongbridgeQuoteProviderTest(unittest.TestCase):
         self.assertIn("NVDA.US", snapshot["symbol_data"])
         self.assertTrue(any("quota exceeded" in item for item in snapshot["data_quality"]["limitations"]))
 
+    def test_format_market_context_snapshot_tolerates_missing_technical(self) -> None:
+        text = quote_provider.format_market_context_snapshot(
+            {
+                "market": "US",
+                "write_policy": "read_only",
+                "summary": {"symbol_count": 1, "quote_count": 1},
+                "data_quality": {"status": "partial", "limitations": []},
+                "symbol_data": {
+                    "FIG.US": {
+                        "quote": {"current_price": "12.34"},
+                        "technical": None,
+                    }
+                },
+            }
+        )
+
+        self.assertIn("FIG.US", text)
+        self.assertIn("MA120=NA", text)
+        self.assertIn("trend=unknown", text)
+
 
 if __name__ == "__main__":
     unittest.main()

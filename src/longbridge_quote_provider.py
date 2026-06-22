@@ -300,6 +300,10 @@ def format_market_context_snapshot(snapshot: dict[str, Any]) -> str:
         for symbol, item in list(symbol_data.items())[:10]:
             quote = item.get("quote") if isinstance(item, dict) else {}
             technical = item.get("technical") if isinstance(item, dict) else {}
+            if not isinstance(quote, dict):
+                quote = {}
+            if not isinstance(technical, dict):
+                technical = {}
             lines.append(
                 f"- {symbol}：price={quote.get('current_price') or 'NA'}，"
                 f"MA120={technical.get('ma120') or 'NA'}，trend={technical.get('ma120_relation') or 'unknown'}"

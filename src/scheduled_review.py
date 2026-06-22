@@ -24,6 +24,9 @@ DAILY_REPORT_DIR = "daily_reviews"
 WEEKLY_REPORT_DIR = "weekly_reviews"
 MAX_CONTEXT_SYMBOLS = 12
 MAX_INTEL_ITEMS_PER_SOURCE = 3
+MAX_LLM_STRATEGY_CONTEXT_CHARS = 12000
+MAX_LLM_TEXT_CHARS = 800
+MAX_LLM_LIST_ITEMS = 5
 VALID_FRAMEWORKS = {"Cash_Anchor", "Growth_Engine"}
 VALID_MARKETS = {"CN", "US", "ALL"}
 VALID_WORKFLOW_TYPES = {"premarket", "close", "weekly"}
@@ -561,6 +564,7 @@ def _run_scheduled_review_llm(
     trace_id: str,
 ) -> str:
     client = LLMClient.for_framework(framework_id)
+    llm_context = _compact_context_for_llm(context)
     return client.complete(
         system_prompt=scheduled_review_system_prompt(),
         user_prompt=scheduled_review_user_prompt(
@@ -568,7 +572,7 @@ def _run_scheduled_review_llm(
             market=market,
             workflow_type=workflow_type,
             review_date=review_date.isoformat(),
-            context_json=json.dumps(context, ensure_ascii=False, indent=2, default=str),
+            context_json=json.dumps(llm_context, ensure_ascii=False, separators=(",", ":"), default=str),
         ),
         agent_role="scheduled_reviewer",
         call_site="scheduled_review.run",
@@ -578,6 +582,489 @@ def _run_scheduled_review_llm(
         user_query=f"scheduled_review:{workflow_type}:{framework_id}:{market}:{review_date.isoformat()}",
         trace_id=trace_id,
     )
+
+
+def _compact_context_for_llm(context: dict[str, Any]) -> dict[str, Any]:
+    """Build a bounded prompt context while keeping the persisted record complete."""
+
+    metadata_keys = (
+        "schema_version",
+        "review_date",
+        "week_start",
+        "week_end",
+        "framework_id",
+        "framework_label",
+        "market",
+        "workflow_type",
+        "workflow_label",
+        "context_bundle_id",
+        "context_symbol_limit",
+    )
+    compact = {key: context.get(key) for key in metadata_keys if key in context}
+    compact["context_profile"] = "scheduled_review_llm_compact_v1"
+    compact["strategy_context"] = _truncate_text(
+        str(context.get("strategy_context") or ""),
+        MAX_LLM_STRATEGY_CONTEXT_CHARS,
+    )
+    compact["snapshot"] = _compact_snapshot_for_llm(context.get("snapshot"))
+    compact["snapshots"] = {
+        market: _compact_snapshot_for_llm(snapshot)
+        for market, snapshot in (context.get("snapshots") or {}).items()
+        if isinstance(snapshot, dict)
+    }
+    compact["account_activity"] = _compact_account_activity_for_llm(context.get("account_activity"))
+    compact["account_activity_by_market"] = {
+        market: _compact_account_activity_for_llm(activity)
+        for market, activity in (context.get("account_activity_by_market") or {}).items()
+        if isinstance(activity, dict)
+    }
+    compact["tracked_symbols"] = _compact_tracked_symbols(context.get("tracked_symbols"))
+    compact["market_data"] = _compact_market_data_for_llm(context.get("market_data"))
+    compact["longbridge_market_context"] = _compact_longbridge_market_for_llm(
+        context.get("longbridge_market_context")
+    )
+    compact["longbridge_fundamental_context"] = _compact_longbridge_fundamental_for_llm(
+        context.get("longbridge_fundamental_context")
+    )
+    compact["longbridge_event_context"] = _compact_longbridge_events_for_llm(
+        context.get("longbridge_event_context")
+    )
+    compact["longbridge_options_context"] = _compact_longbridge_options_for_llm(
+        context.get("longbridge_options_context")
+    )
+    compact["symbol_intel"] = _compact_symbol_intel_for_llm(context.get("symbol_intel"))
+    compact["research_dossiers"] = _compact_research_dossiers_for_llm(context.get("research_dossiers"))
+    compact["research_engine"] = _compact_research_engine_for_llm(context.get("research_engine"))
+    compact["operation_framework"] = _compact_operation_framework_for_llm(context.get("operation_framework"))
+    compact["history"] = _compact_generic(context.get("history"), depth=5, list_limit=MAX_LLM_LIST_ITEMS)
+    compact["daily_records"] = _compact_generic(context.get("daily_records"), depth=4, list_limit=MAX_LLM_LIST_ITEMS)
+    compact["record_counts"] = _compact_generic(context.get("record_counts"), depth=3)
+    compact["optional_data_notes"] = _compact_generic(context.get("optional_data_notes"), depth=2)
+    compact["instructions"] = _compact_generic(context.get("instructions"), depth=2)
+    compact["data_gaps"] = _compact_generic(context.get("data_gaps"), depth=2, list_limit=12)
+    return {key: value for key, value in compact.items() if value not in ({}, [], None, "")}
+
+
+def _compact_snapshot_for_llm(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "as_of": value.get("as_of"),
+        "market_filter": value.get("market_filter"),
+        "symbol_filter": value.get("symbol_filter"),
+        "summary": _compact_generic(value.get("summary"), depth=3),
+        "missing_files": list(value.get("missing_files") or [])[:MAX_LLM_LIST_ITEMS],
+        "longbridge_growth_universe_policy": _compact_generic(
+            value.get("longbridge_growth_universe_policy"), depth=3
+        ),
+        "longbridge_cash_anchor_watchlist_policy": _compact_generic(
+            value.get("longbridge_cash_anchor_watchlist_policy"), depth=3
+        ),
+        "longbridge_account_activity_policy": _compact_generic(
+            value.get("longbridge_account_activity_policy"), depth=3
+        ),
+        "holdings": _compact_generic(value.get("holdings"), depth=3, list_limit=MAX_CONTEXT_SYMBOLS),
+        "watchlist": _compact_generic(value.get("watchlist"), depth=3, list_limit=MAX_CONTEXT_SYMBOLS),
+        "longbridge_growth_universe": _compact_universe_rows(value.get("longbridge_growth_universe")),
+        "longbridge_cash_anchor_watchlist": _compact_universe_rows(value.get("longbridge_cash_anchor_watchlist")),
+        "longbridge_growth_universe_error": value.get("longbridge_growth_universe_error") or "",
+        "longbridge_cash_anchor_watchlist_error": value.get("longbridge_cash_anchor_watchlist_error") or "",
+        "longbridge_account_activity_error": value.get("longbridge_account_activity_error") or "",
+    }
+
+
+def _compact_universe_rows(value: Any) -> list[dict[str, Any]]:
+    rows = value if isinstance(value, list) else []
+    keys = (
+        "symbol",
+        "name",
+        "market",
+        "asset_type",
+        "security_type",
+        "has_position",
+        "quantity",
+        "cost_price",
+        "current_price",
+        "reason",
+        "notes",
+        "group_name",
+        "source_tags",
+    )
+    return [_select_keys(row, keys) for row in rows[:MAX_CONTEXT_SYMBOLS] if isinstance(row, dict)]
+
+
+def _compact_account_activity_for_llm(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    sections = value.get("sections") if isinstance(value.get("sections"), dict) else {}
+    return {
+        "status": value.get("status"),
+        "period": _compact_generic(value.get("period"), depth=2),
+        "currency": value.get("currency"),
+        "summary": _compact_generic(value.get("summary"), depth=3),
+        "data_quality": _compact_quality(value.get("data_quality")),
+        "write_policy": value.get("write_policy"),
+        "sections": {
+            key: {
+                "status": section.get("status"),
+                "summary": _compact_generic(section.get("summary"), depth=3),
+                "data_preview": _compact_generic(section.get("data_preview"), depth=3, list_limit=MAX_LLM_LIST_ITEMS),
+                "error": section.get("error") or "",
+            }
+            for key, section in sections.items()
+            if isinstance(section, dict)
+        },
+    }
+
+
+def _compact_tracked_symbols(value: Any) -> list[dict[str, Any]]:
+    rows = value if isinstance(value, list) else []
+    keys = ("symbol", "name", "market", "source", "priority", "notes")
+    return [_select_keys(row, keys) for row in rows[:MAX_CONTEXT_SYMBOLS] if isinstance(row, dict)]
+
+
+def _compact_market_data_for_llm(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, Any] = {}
+    for symbol, payload in list(value.items())[:MAX_CONTEXT_SYMBOLS]:
+        if not isinstance(payload, dict):
+            continue
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        result[str(symbol)] = {
+            "status": payload.get("status"),
+            "source": payload.get("source"),
+            "market": payload.get("market"),
+            "error": payload.get("error") or "",
+            "data": _select_keys(
+                data,
+                (
+                    "current_price",
+                    "latest_close",
+                    "MA20",
+                    "MA50",
+                    "MA120",
+                    "ma120_relation",
+                    "volume",
+                    "turnover",
+                    "dividend_status",
+                ),
+            ),
+        }
+    return result
+
+
+def _compact_longbridge_market_for_llm(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    symbol_data: dict[str, Any] = {}
+    for symbol, payload in _symbol_items(value):
+        quote = payload.get("quote") if isinstance(payload.get("quote"), dict) else {}
+        technical = payload.get("technical") if isinstance(payload.get("technical"), dict) else {}
+        symbol_data[symbol] = {
+            "quote": _select_keys(quote, ("current_price", "quote_source", "timestamp")),
+            "technical": _select_keys(
+                technical,
+                ("latest_close", "ma20", "ma50", "ma120", "ma120_relation", "kline_count"),
+            ),
+            "latest_kline": _last_items(payload.get("kline_preview"), limit=2),
+        }
+    return _compact_longbridge_base(value) | {"symbol_data": symbol_data}
+
+
+def _compact_longbridge_fundamental_for_llm(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    symbol_data: dict[str, Any] = {}
+    for symbol, payload in _symbol_items(value):
+        valuation = payload.get("valuation_metrics") if isinstance(payload.get("valuation_metrics"), dict) else {}
+        valuation_overview = valuation.get("overview") if isinstance(valuation.get("overview"), dict) else {}
+        financial = payload.get("financial_report_snapshot")
+        forecast = payload.get("forecast_eps") if isinstance(payload.get("forecast_eps"), dict) else {}
+        consensus = payload.get("consensus") if isinstance(payload.get("consensus"), dict) else {}
+        symbol_data[symbol] = {
+            "company_name": payload.get("company_name") or "",
+            "industry": payload.get("industry") or "",
+            "valuation_desc": _truncate_text(payload.get("valuation_desc") or "", 300),
+            "valuation_summary": _truncate_text(
+                valuation_overview.get("ai_summary") or "",
+                MAX_LLM_TEXT_CHARS,
+            ),
+            "financial_report_snapshot": _compact_generic(financial, depth=3, list_limit=MAX_LLM_LIST_ITEMS),
+            "forecast_eps": _compact_generic(forecast, depth=3, list_limit=3),
+            "consensus": _compact_generic(consensus, depth=3, list_limit=3),
+            "dividend_count": payload.get("dividend_count"),
+            "dividend_preview": _compact_generic(payload.get("dividend_preview"), depth=3, list_limit=3),
+        }
+    return _compact_longbridge_base(value) | {"symbol_data": symbol_data}
+
+
+def _compact_longbridge_events_for_llm(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    symbol_data: dict[str, Any] = {}
+    for symbol, payload in _symbol_items(value):
+        symbol_data[symbol] = {
+            "news": _compact_event_items(payload.get("news")),
+            "filings": _compact_event_items(payload.get("filings")),
+            "topics": _compact_event_items(payload.get("topics")),
+        }
+    return _compact_longbridge_base(value) | {
+        "calendar": _compact_generic(value.get("calendar"), depth=3, list_limit=MAX_LLM_LIST_ITEMS),
+        "symbol_data": symbol_data,
+    }
+
+
+def _compact_longbridge_options_for_llm(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    symbol_data: dict[str, Any] = {}
+    for symbol, payload in _symbol_items(value):
+        symbol_data[symbol] = {
+            "expirations": list(payload.get("expirations") or [])[:MAX_LLM_LIST_ITEMS],
+            "nearest_expiration": payload.get("nearest_expiration"),
+            "strike_count": payload.get("strike_count"),
+            "risk_summary": _compact_generic(payload.get("risk_summary"), depth=3),
+            "volume_snapshot": _compact_generic(payload.get("volume_snapshot"), depth=3),
+            "volume_daily_preview": _compact_generic(payload.get("volume_daily_preview"), depth=3, list_limit=3),
+            "chain_preview": _compact_generic(payload.get("chain_preview"), depth=3, list_limit=5),
+        }
+    return _compact_longbridge_base(value) | {"symbol_data": symbol_data}
+
+
+def _compact_symbol_intel_for_llm(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, Any] = {}
+    for symbol, payload in list(value.items())[:MAX_CONTEXT_SYMBOLS]:
+        if not isinstance(payload, dict):
+            continue
+        result[str(symbol)] = {
+            key: _compact_intel_payload_for_llm(payload.get(key))
+            for key in ("news", "announcements")
+            if payload.get(key)
+        }
+    return result
+
+
+def _compact_intel_payload_for_llm(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    data = value.get("data") if isinstance(value.get("data"), dict) else {}
+    return {
+        "status": value.get("status"),
+        "source": value.get("source"),
+        "data_type": value.get("data_type"),
+        "items": _compact_intel_items_for_llm(value.get("items") or data.get("items")),
+        "error": value.get("error") or "",
+    }
+
+
+def _compact_research_dossiers_for_llm(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, Any] = {}
+    for symbol, payload in list(value.items())[:MAX_CONTEXT_SYMBOLS]:
+        if isinstance(payload, dict):
+            result[str(symbol)] = _select_keys(
+                payload,
+                (
+                    "exists",
+                    "freshness",
+                    "core_thesis",
+                    "why_i_bought",
+                    "bullish_case",
+                    "bearish_case",
+                    "risk_points",
+                    "exit_conditions",
+                    "open_questions",
+                    "status",
+                    "error",
+                ),
+            )
+    return _compact_generic(result, depth=4, list_limit=MAX_LLM_LIST_ITEMS)
+
+
+def _compact_research_engine_for_llm(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    result = _select_keys(
+        value,
+        (
+            "schema_version",
+            "engine",
+            "framework_id",
+            "as_of",
+            "source_policy",
+            "source_summary",
+            "universe_count",
+            "analyzed_symbol_count",
+            "market_context_summary",
+            "fundamental_context_summary",
+            "options_context_summary",
+            "data_quality",
+        ),
+    )
+    result["theme_radar"] = _compact_generic(value.get("theme_radar"), depth=4, list_limit=MAX_LLM_LIST_ITEMS)
+    result["industry_mapper"] = _compact_generic(value.get("industry_mapper"), depth=4, list_limit=MAX_LLM_LIST_ITEMS)
+    result["research_signals"] = _compact_research_signals(value.get("research_signals"))
+    result["deep_research_queue"] = _compact_generic(
+        value.get("deep_research_queue"), depth=4, list_limit=MAX_LLM_LIST_ITEMS
+    )
+    return result
+
+
+def _compact_research_signals(value: Any) -> list[dict[str, Any]]:
+    rows = value if isinstance(value, list) else []
+    keys = (
+        "ticker",
+        "name",
+        "theme_id",
+        "theme",
+        "thesis_impact",
+        "valuation_view",
+        "confidence",
+        "risk_level",
+        "evidence_strength",
+        "suggested_status",
+        "next_validation",
+        "evidence",
+        "has_position",
+        "asset_type",
+    )
+    return [_compact_generic(_select_keys(row, keys), depth=4, list_limit=MAX_LLM_LIST_ITEMS) for row in rows[:MAX_CONTEXT_SYMBOLS] if isinstance(row, dict)]
+
+
+def _compact_operation_framework_for_llm(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    result = _select_keys(
+        value,
+        (
+            "schema_version",
+            "engine",
+            "framework_id",
+            "market",
+            "workflow_type",
+            "as_of",
+            "source_policy",
+            "action_permission",
+            "summary",
+        ),
+    )
+    plans = value.get("operation_plans") if isinstance(value.get("operation_plans"), list) else []
+    plan_keys = (
+        "ticker",
+        "name",
+        "action",
+        "final_status",
+        "position_type",
+        "permission_result",
+        "rationale",
+        "execution_conditions",
+        "stop_review_conditions",
+        "constraints",
+        "user_approval_required",
+    )
+    result["operation_plans"] = [
+        _compact_generic(_select_keys(row, plan_keys), depth=4, list_limit=MAX_LLM_LIST_ITEMS)
+        for row in plans[:MAX_CONTEXT_SYMBOLS]
+        if isinstance(row, dict)
+    ]
+    return result
+
+
+def _compact_longbridge_base(value: dict[str, Any]) -> dict[str, Any]:
+    data_quality = value.get("data_quality") if isinstance(value.get("data_quality"), dict) else {}
+    return {
+        "source": value.get("source"),
+        "scope": value.get("scope"),
+        "as_of": value.get("as_of"),
+        "market": value.get("market"),
+        "symbols": list(value.get("symbols") or [])[:MAX_CONTEXT_SYMBOLS],
+        "summary": _compact_generic(value.get("summary"), depth=3),
+        "data_quality": _compact_quality(data_quality),
+        "write_policy": value.get("write_policy"),
+        "status": value.get("status") or data_quality.get("status"),
+        "error": value.get("error") or "",
+    }
+
+
+def _compact_quality(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "status": value.get("status"),
+        "limitations": list(value.get("limitations") or [])[:12],
+        "source_chain": _compact_generic(value.get("source_chain"), depth=3, list_limit=MAX_LLM_LIST_ITEMS),
+    }
+
+
+def _symbol_items(value: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    symbol_data = value.get("symbol_data") if isinstance(value.get("symbol_data"), dict) else {}
+    return [
+        (str(symbol), payload)
+        for symbol, payload in list(symbol_data.items())[:MAX_CONTEXT_SYMBOLS]
+        if isinstance(payload, dict)
+    ]
+
+
+def _compact_event_items(value: Any) -> list[dict[str, Any]]:
+    items = value if isinstance(value, list) else []
+    keys = ("title", "summary", "published_at", "url", "source", "file_urls")
+    return [
+        _compact_generic(_select_keys(item, keys), depth=3, list_limit=3)
+        for item in items[:MAX_INTEL_ITEMS_PER_SOURCE]
+        if isinstance(item, dict)
+    ]
+
+
+def _compact_intel_items_for_llm(value: Any) -> list[dict[str, Any]]:
+    items = value if isinstance(value, list) else []
+    keys = ("title", "published_at", "source")
+    return [
+        _compact_generic(_select_keys(item, keys), depth=2, list_limit=2)
+        for item in items[:2]
+        if isinstance(item, dict)
+    ]
+
+
+def _select_keys(value: Any, keys: tuple[str, ...]) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {key: value.get(key) for key in keys if value.get(key) not in (None, "", [], {})}
+
+
+def _last_items(value: Any, *, limit: int) -> list[Any]:
+    if not isinstance(value, list):
+        return []
+    return _compact_generic(value[-limit:], depth=3, list_limit=limit)
+
+
+def _compact_generic(value: Any, *, depth: int = 4, list_limit: int = MAX_LLM_LIST_ITEMS) -> Any:
+    if depth <= 0:
+        return "<truncated>"
+    if isinstance(value, str):
+        return _truncate_text(value, MAX_LLM_TEXT_CHARS)
+    if isinstance(value, list):
+        result = [_compact_generic(item, depth=depth - 1, list_limit=list_limit) for item in value[:list_limit]]
+        if len(value) > list_limit:
+            result.append(f"... {len(value) - list_limit} items omitted")
+        return result
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            result[str(key)] = _compact_generic(item, depth=depth - 1, list_limit=list_limit)
+        return result
+    return value
+
+
+def _truncate_text(value: Any, max_chars: int) -> str:
+    text = str(value or "")
+    if len(text) <= max_chars:
+        return text
+    omitted = len(text) - max_chars
+    return f"{text[:max_chars]}\n[truncated {omitted} chars]"
 
 
 def _build_framework_snapshot(framework_id: str, market: str, as_of: date) -> dict[str, Any]:

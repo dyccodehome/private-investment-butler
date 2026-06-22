@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from datetime import date
@@ -168,6 +169,61 @@ class ScheduledReviewTest(unittest.TestCase):
         self.assertEqual(context["research_engine"]["research_signals"][0]["ticker"], "NVDA.US")
         self.assertEqual(context["operation_framework"]["engine"], "operation_framework")
         self.assertEqual(context["operation_framework"]["operation_plans"][0]["ticker"], "NVDA.US")
+
+    def test_llm_context_compacts_raw_provider_payloads(self) -> None:
+        fundamental = _fundamental_context()
+        fundamental["sections"] = {"raw_provider_payload": "x" * 20000}
+        event = _event_context()
+        event["sections"] = {"raw_provider_payload": "y" * 20000}
+        options = _options_context()
+        options["sections"] = {"raw_provider_payload": "z" * 20000}
+        market = _market_context()
+        market["sections"] = {"raw_provider_payload": "m" * 20000}
+        context = {
+            "schema_version": 1,
+            "review_date": "2026-06-04",
+            "framework_id": "Growth_Engine",
+            "framework_label": "Growth Engine",
+            "market": "US",
+            "workflow_type": "premarket",
+            "workflow_label": "开盘前计划",
+            "context_bundle_id": "US_Disruptive_Growth",
+            "strategy_context": "重要规则\n" * 5000,
+            "snapshot": {
+                "summary": {"longbridge_growth_universe_count": 1},
+                "longbridge_growth_universe": [{"symbol": "NVDA.US", "name": "NVIDIA", "has_position": True}],
+                "longbridge_growth_universe_source": {"raw_provider_payload": "u" * 20000},
+            },
+            "account_activity": _account_activity(),
+            "tracked_symbols": [{"symbol": "NVDA.US", "name": "NVIDIA", "market": "US"}],
+            "market_data": {"NVDA.US": {"status": "ok", "data": {"current_price": 120, "MA120": 100}}},
+            "longbridge_market_context": market,
+            "longbridge_fundamental_context": fundamental,
+            "longbridge_event_context": event,
+            "longbridge_options_context": options,
+            "symbol_intel": {"NVDA.US": {"news": _intel("news", "新闻")}},
+            "research_dossiers": {"NVDA.US": {"exists": True, "core_thesis": "AI"}},
+            "research_engine": {
+                "engine": "growth_research_mvp",
+                "research_signals": [{"ticker": "NVDA.US", "evidence": ["e"] * 20}],
+            },
+            "operation_framework": {
+                "engine": "operation_framework",
+                "operation_plans": [{"ticker": "NVDA.US", "action": "hold", "constraints": ["c"] * 20}],
+            },
+            "history": {"previous_close": [{"result": "上一交易日复盘"}]},
+            "instructions": ["给出今日计划"],
+            "data_gaps": [],
+        }
+
+        raw_len = len(json.dumps(context, ensure_ascii=False, default=str))
+        compact = scheduled_review._compact_context_for_llm(context)
+        compact_json = json.dumps(compact, ensure_ascii=False, default=str)
+
+        self.assertLess(len(compact_json), raw_len // 3)
+        self.assertNotIn("raw_provider_payload", compact_json)
+        self.assertEqual(compact["longbridge_market_context"]["symbol_data"]["NVDA.US"]["quote"]["current_price"], 120)
+        self.assertEqual(compact["operation_framework"]["operation_plans"][0]["ticker"], "NVDA.US")
 
     def test_weekly_context_reads_past_week_daily_records(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
