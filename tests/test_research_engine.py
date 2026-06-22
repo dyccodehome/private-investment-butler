@@ -37,6 +37,14 @@ class ResearchEngineTest(unittest.TestCase):
                                 "summary": "AI compute demand remains strong.",
                             }
                         ]
+                    },
+                    "longbridge_news": {
+                        "items": [
+                            {
+                                "title": "Longbridge: NVIDIA AI platform demand remains resilient",
+                                "summary": "Customer orders remain visible.",
+                            }
+                        ]
                     }
                 },
                 "NET.US": {
@@ -101,6 +109,7 @@ class ResearchEngineTest(unittest.TestCase):
         self.assertEqual(report["market_context_summary"]["symbols_with_longbridge_market_snapshot"], 1)
         self.assertEqual(report["fundamental_context_summary"]["symbols_with_valuation"], 1)
         self.assertTrue(any("长桥估值摘要" in item for item in signals["NVDA.US"]["evidence"]))
+        self.assertTrue(any("长桥资讯/披露/话题命中" in item for item in signals["NVDA.US"]["evidence"]))
         self.assertTrue(report["theme_radar"])
         queue = {item["ticker"]: item for item in report["deep_research_queue"]}
         self.assertEqual(queue["NET.US"]["suggested_action"], "create_dossier")

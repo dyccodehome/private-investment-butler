@@ -54,6 +54,15 @@ class LongbridgeCapabilitiesTest(unittest.TestCase):
         capability = assert_longbridge_command_allowed(["longbridge", "finance-calendar", "report", "--format", "json"])
         self.assertEqual(capability.capability_id, "finance_calendar")
 
+        capability = assert_longbridge_command_allowed(["longbridge", "news", "NVDA.US", "--format", "json"])
+        self.assertEqual(capability.capability_id, "news")
+
+        capability = assert_longbridge_command_allowed(["longbridge", "filing", "NVDA.US", "--format", "json"])
+        self.assertEqual(capability.capability_id, "filing")
+
+        capability = assert_longbridge_command_allowed(["longbridge", "topic", "search", "AI", "--format", "json"])
+        self.assertEqual(capability.capability_id, "topic")
+
     def test_denies_trading_write_commands(self) -> None:
         with self.assertRaises(PermissionError):
             assert_longbridge_command_allowed(["longbridge", "submit-order", "NVDA.US"])
@@ -64,6 +73,9 @@ class LongbridgeCapabilitiesTest(unittest.TestCase):
         with self.assertRaises(PermissionError):
             assert_longbridge_command_allowed(["longbridge", "order", "buy", "NVDA.US", "1"])
 
+        with self.assertRaises(PermissionError):
+            assert_longbridge_command_allowed(["longbridge", "topic", "create", "--body", "test"])
+
     def test_denies_unknown_commands_until_provider_is_fixed(self) -> None:
         with self.assertRaises(PermissionError):
             assert_longbridge_command_allowed(["longbridge", "unknown-read", "--format", "json"])
@@ -72,6 +84,7 @@ class LongbridgeCapabilitiesTest(unittest.TestCase):
         self.assertEqual(assert_read_capability("positions").capability_id, "positions")
         self.assertEqual(assert_read_capability("candles").capability_id, "candles")
         self.assertEqual(assert_read_capability("valuation").capability_id, "valuation")
+        self.assertEqual(assert_read_capability("news").capability_id, "news")
         with self.assertRaises(PermissionError):
             assert_read_capability("fundamentals")
         self.assertEqual(assert_read_capability("fundamentals", require_implemented=False).capability_id, "fundamentals")

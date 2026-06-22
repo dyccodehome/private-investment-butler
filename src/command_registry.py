@@ -135,6 +135,13 @@ COMMAND_REGISTRY: list[CommandDef] = [
         aliases=("lb-fundamental", "lb-fund"),
         args_hint="symbol=<code>[,<code>] [market=US] [limit=6] [timeout=<seconds>]",
     ),
+    CommandDef(
+        "longbridge-events",
+        "读取长桥新闻、监管披露、社区话题和财经日历只读快照",
+        "Ledger",
+        aliases=("longbridge-event", "lb-events", "lb-event"),
+        args_hint="symbol=<code>[,<code>] [market=US] [limit=6] [item_limit=5] [timeout=<seconds>]",
+    ),
     CommandDef("apply", "确认并写入外部同步结果；当前支持 longbridge cash_anchor", "Ledger", args_hint="longbridge cash_anchor"),
     CommandDef(
         "absorb",
@@ -223,6 +230,7 @@ def handle_command(raw_text: str, chat_id: str) -> str | None:
         "longbridge-account": _handle_longbridge_account,
         "longbridge-market": _handle_longbridge_market,
         "longbridge-fundamental": _handle_longbridge_fundamental,
+        "longbridge-events": _handle_longbridge_events,
         "apply": _handle_apply,
         "absorb": _handle_absorb,
         "dossier-refresh": _handle_dossier_refresh,
@@ -268,6 +276,7 @@ def help_text() -> str:
         "/longbridge-account [days=<n>] [symbol=<code>] [currency=USD] [profit=true] - 读取长桥账户和成交只读快照",
         "/longbridge-market symbol=NVDA.US,MSFT.US [market=US] [kline_limit=6] - 读取长桥行情和市场状态只读快照",
         "/longbridge-fundamental symbol=NVDA.US,MSFT.US [limit=6] - 读取长桥基本面只读快照",
+        "/longbridge-events symbol=NVDA.US,MSFT.US [limit=6] [item_limit=5] - 读取长桥资讯事件只读快照",
         "/apply longbridge cash_anchor - 确认后把长桥 QQQI/XQQI/TQQQ 写入 Cash Anchor 账本",
         "",
         "Growth Engine：",
@@ -883,6 +892,35 @@ def _handle_longbridge_fundamental(args: str, chat_id: str) -> str:
     except (RuntimeError, ValueError) as exc:
         return str(exc)
     return format_fundamental_context_snapshot(snapshot)
+
+
+def _handle_longbridge_events(args: str, chat_id: str) -> str:
+    from src.longbridge_event_provider import build_event_context_snapshot, format_event_context_snapshot
+
+    parsed = _parse_key_values(args)
+    symbols = _parse_symbol_list(parsed.get("symbol") or parsed.get("symbols") or args)
+    if not symbols:
+        return "请提供 symbol，例如：/longbridge-events symbol=NVDA.US,MSFT.US market=US"
+    timeout = _optional_int(parsed.get("timeout")) or 15
+    limit = _optional_int(parsed.get("limit") or parsed.get("symbol_limit")) or 6
+    item_limit = _optional_int(parsed.get("item_limit") or parsed.get("count")) or 5
+    include_filings = str(parsed.get("filings") or "true").lower() not in {"0", "false", "no", "n"}
+    include_topics = str(parsed.get("topics") or "true").lower() not in {"0", "false", "no", "n"}
+    include_calendar = str(parsed.get("calendar") or "true").lower() not in {"0", "false", "no", "n"}
+    try:
+        snapshot = build_event_context_snapshot(
+            symbols=symbols,
+            market=parsed.get("market") or "US",
+            symbol_limit=limit,
+            item_limit=item_limit,
+            include_filings=include_filings,
+            include_topics=include_topics,
+            include_calendar=include_calendar,
+            timeout_seconds=timeout,
+        )
+    except (RuntimeError, ValueError) as exc:
+        return str(exc)
+    return format_event_context_snapshot(snapshot)
 
 
 def _handle_research_radar(args: str, chat_id: str) -> str:

@@ -628,7 +628,7 @@ def _combined_text(
 
 def _intel_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    for key in ("news", "announcements", "filings"):
+    for key in ("news", "announcements", "filings", "topics", "longbridge_news", "longbridge_filings", "longbridge_topics"):
         block = payload.get(key)
         if isinstance(block, dict):
             data = block.get("data") if isinstance(block.get("data"), dict) else {}
@@ -756,6 +756,9 @@ def _evidence_lines(
         lines.append(f"正向关键词命中 {positive_score}。")
     if negative_score:
         lines.append(f"负向/风险关键词命中 {negative_score}。")
+    longbridge_event_count = _longbridge_event_count(intel_payload)
+    if longbridge_event_count:
+        lines.append(f"长桥资讯/披露/话题命中 {longbridge_event_count} 条。")
     valuation_desc = str(fundamental_payload.get("valuation_desc") or "").strip()
     if valuation_desc:
         lines.append(f"长桥估值摘要：{valuation_desc[:120]}")
@@ -768,6 +771,15 @@ def _evidence_lines(
         if title:
             lines.append(f"资讯：{title[:120]}")
     return _dedupe(lines)[:MAX_EVIDENCE_ITEMS]
+
+
+def _longbridge_event_count(payload: dict[str, Any]) -> int:
+    total = 0
+    for key in ("longbridge_news", "longbridge_filings", "longbridge_topics"):
+        block = payload.get(key)
+        if isinstance(block, dict):
+            total += len(block.get("items") or [])
+    return total
 
 
 def _jsonish_text(value: Any) -> str:

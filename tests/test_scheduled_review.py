@@ -67,10 +67,13 @@ class ScheduledReviewTest(unittest.TestCase):
                 "src.longbridge_quote_provider.build_market_context_snapshot"
             ) as market_context, patch(
                 "src.longbridge_fundamental_provider.build_fundamental_context_snapshot"
-            ) as fundamental_context:
+            ) as fundamental_context, patch(
+                "src.longbridge_event_provider.build_event_context_snapshot"
+            ) as event_context:
                 account_snapshot.return_value = _account_activity()
                 market_context.return_value = _market_context()
                 fundamental_context.return_value = _fundamental_context()
+                event_context.return_value = _event_context()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-04",
                     "market_filter": "US",
@@ -151,6 +154,8 @@ class ScheduledReviewTest(unittest.TestCase):
         self.assertEqual(context["account_activity"]["summary"]["execution_count"], 1)
         self.assertEqual(context["longbridge_market_context"]["summary"]["quote_count"], 1)
         self.assertEqual(context["longbridge_fundamental_context"]["summary"]["valuation_count"], 1)
+        self.assertEqual(context["longbridge_event_context"]["summary"]["news_count"], 1)
+        self.assertEqual(context["symbol_intel"]["NVDA.US"]["longbridge_news"]["items"][0]["title"], "Longbridge NVIDIA AI news")
         self.assertEqual(context["market_data"]["NVDA.US"]["data"]["MA120"], 100)
         self.assertEqual(context["research_engine"]["engine"], "growth_research_mvp")
         self.assertEqual(context["research_engine"]["market_context_summary"]["symbols_with_ma120"], 1)
@@ -175,10 +180,13 @@ class ScheduledReviewTest(unittest.TestCase):
                 "src.longbridge_quote_provider.build_market_context_snapshot"
             ) as market_context, patch(
                 "src.longbridge_fundamental_provider.build_fundamental_context_snapshot"
-            ) as fundamental_context:
+            ) as fundamental_context, patch(
+                "src.longbridge_event_provider.build_event_context_snapshot"
+            ) as event_context:
                 account_snapshot.return_value = _account_activity()
                 market_context.return_value = _market_context()
                 fundamental_context.return_value = _fundamental_context()
+                event_context.return_value = _event_context()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-07",
                     "market_filter": "US",
@@ -233,6 +241,7 @@ class ScheduledReviewTest(unittest.TestCase):
         self.assertIn("US", context["account_activity_by_market"])
         self.assertEqual(context["longbridge_market_context"]["summary"]["quote_count"], 1)
         self.assertEqual(context["longbridge_fundamental_context"]["summary"]["valuation_count"], 1)
+        self.assertEqual(context["longbridge_event_context"]["summary"]["news_count"], 1)
         self.assertEqual(context["research_engine"]["engine"], "growth_research_mvp")
         self.assertEqual(context["operation_framework"]["engine"], "operation_framework")
 
@@ -252,10 +261,13 @@ class ScheduledReviewTest(unittest.TestCase):
                 "src.longbridge_quote_provider.build_market_context_snapshot"
             ) as market_context, patch(
                 "src.longbridge_fundamental_provider.build_fundamental_context_snapshot"
-            ) as fundamental_context:
+            ) as fundamental_context, patch(
+                "src.longbridge_event_provider.build_event_context_snapshot"
+            ) as event_context:
                 account_snapshot.return_value = _account_activity()
                 market_context.return_value = _market_context()
                 fundamental_context.return_value = _fundamental_context()
+                event_context.return_value = _event_context()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-04",
                     "market_filter": "US",
@@ -340,10 +352,13 @@ class ScheduledReviewTest(unittest.TestCase):
                 "src.longbridge_quote_provider.build_market_context_snapshot"
             ) as market_context, patch(
                 "src.longbridge_fundamental_provider.build_fundamental_context_snapshot"
-            ) as fundamental_context:
+            ) as fundamental_context, patch(
+                "src.longbridge_event_provider.build_event_context_snapshot"
+            ) as event_context:
                 account_snapshot.return_value = _account_activity()
                 market_context.return_value = _market_context()
                 fundamental_context.return_value = _fundamental_context()
+                event_context.return_value = _event_context()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-04",
                     "market_filter": "US",
@@ -409,9 +424,12 @@ class ScheduledReviewTest(unittest.TestCase):
                 "src.longbridge_quote_provider.build_market_context_snapshot"
             ) as market_context, patch(
                 "src.longbridge_fundamental_provider.build_fundamental_context_snapshot"
-            ) as fundamental_context:
+            ) as fundamental_context, patch(
+                "src.longbridge_event_provider.build_event_context_snapshot"
+            ) as event_context:
                 market_context.return_value = _market_context()
                 fundamental_context.return_value = _fundamental_context()
+                event_context.return_value = _event_context()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-04",
                     "market_filter": "US",
@@ -481,11 +499,14 @@ class ScheduledReviewTest(unittest.TestCase):
             ) as market_context, patch(
                 "src.longbridge_fundamental_provider.build_fundamental_context_snapshot"
             ) as fundamental_context, patch(
+                "src.longbridge_event_provider.build_event_context_snapshot"
+            ) as event_context, patch(
                 "src.scheduled_review.LLMClient"
             ) as client_cls:
                 account_snapshot.return_value = _account_activity()
                 market_context.return_value = _market_context()
                 fundamental_context.return_value = _fundamental_context()
+                event_context.return_value = _event_context()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-04",
                     "market_filter": "US",
@@ -646,6 +667,53 @@ def _fundamental_context(status: str = "ok") -> dict:
         },
         "data_quality": {"status": status, "limitations": []},
         "write_policy": "read_only_fundamental_data; no order placement, amendment, or cancellation",
+    }
+
+
+def _event_context(status: str = "ok") -> dict:
+    return {
+        "source": "longbridge_cli",
+        "scope": "event_context_snapshot",
+        "as_of": "2026-06-04T08:00:00",
+        "market": "US",
+        "symbols": ["NVDA.US"],
+        "summary": {
+            "symbol_count": 1,
+            "news_count": 1,
+            "filing_count": 1,
+            "topic_count": 1,
+            "calendar_event_count": 2,
+        },
+        "symbol_data": {
+            "NVDA.US": {
+                "news": [
+                    {
+                        "id": "1",
+                        "title": "Longbridge NVIDIA AI news",
+                        "summary": "AI platform demand remains strong.",
+                        "published_at": "2026-06-04T00:00:00Z",
+                    }
+                ],
+                "filings": [
+                    {
+                        "id": "2",
+                        "title": "10-Q - NVIDIA",
+                        "summary": "Quarterly filing.",
+                        "published_at": "2026-06-03T00:00:00Z",
+                    }
+                ],
+                "topics": [
+                    {
+                        "id": "3",
+                        "title": "NVIDIA AI topic",
+                        "summary": "Community discussion.",
+                        "published_at": "2026-06-02T00:00:00Z",
+                    }
+                ],
+            }
+        },
+        "data_quality": {"status": status, "limitations": []},
+        "write_policy": "read_only_event_data; no posting, subscription changes, order placement, amendment, or cancellation",
     }
 
 

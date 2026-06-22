@@ -73,6 +73,7 @@ def format_scheduled_health(summary: dict[str, Any], *, limit: int = MAX_RECENT_
         f"- US/ALL 报告缺 account_activity：{len(reports.get('records_missing_account_activity') or [])}",
         f"- US/ALL 报告缺 longbridge_market_context：{len(reports.get('records_missing_longbridge_market_context') or [])}",
         f"- US/ALL 报告缺 longbridge_fundamental_context：{len(reports.get('records_missing_longbridge_fundamental_context') or [])}",
+        f"- US/ALL 报告缺 longbridge_event_context：{len(reports.get('records_missing_longbridge_event_context') or [])}",
         f"- Growth 报告缺 research_engine：{len(reports.get('growth_records_missing_research_engine') or [])}",
         f"- Growth 报告缺 operation_framework：{len(reports.get('growth_records_missing_operation_framework') or [])}",
     ]
@@ -148,6 +149,7 @@ def _summarize_reports(records: list[dict[str, Any]]) -> dict[str, Any]:
     missing_account_activity: list[dict[str, Any]] = []
     missing_market_context: list[dict[str, Any]] = []
     missing_fundamental_context: list[dict[str, Any]] = []
+    missing_event_context: list[dict[str, Any]] = []
     empty_results: list[dict[str, Any]] = []
 
     for record in _sort_by_created_at(records, reverse=True):
@@ -166,6 +168,8 @@ def _summarize_reports(records: list[dict[str, Any]]) -> dict[str, Any]:
             missing_market_context.append(brief)
         if str(record.get("market") or "") in {"US", "ALL"} and not _has_longbridge_fundamental_context(context):
             missing_fundamental_context.append(brief)
+        if str(record.get("market") or "") in {"US", "ALL"} and not _has_longbridge_event_context(context):
+            missing_event_context.append(brief)
         if str(record.get("framework_id") or "") == "Growth_Engine":
             if not isinstance(context.get("research_engine"), dict):
                 missing_research.append(brief)
@@ -184,6 +188,7 @@ def _summarize_reports(records: list[dict[str, Any]]) -> dict[str, Any]:
         "records_missing_account_activity": missing_account_activity[:MAX_RECENT_ITEMS],
         "records_missing_longbridge_market_context": missing_market_context[:MAX_RECENT_ITEMS],
         "records_missing_longbridge_fundamental_context": missing_fundamental_context[:MAX_RECENT_ITEMS],
+        "records_missing_longbridge_event_context": missing_event_context[:MAX_RECENT_ITEMS],
         "growth_records_missing_research_engine": missing_research[:MAX_RECENT_ITEMS],
         "growth_records_missing_operation_framework": missing_operation[:MAX_RECENT_ITEMS],
         "empty_result_records": empty_results[:MAX_RECENT_ITEMS],
@@ -229,6 +234,9 @@ def _build_findings(runs: dict[str, Any], reports: dict[str, Any]) -> list[str]:
     missing_fundamental = len(reports.get("records_missing_longbridge_fundamental_context") or [])
     if missing_fundamental:
         findings.append(f"最近 US/ALL 报告中有 {missing_fundamental} 条没有 longbridge_fundamental_context；基本面接入后的新报告应包含该字段。")
+    missing_event = len(reports.get("records_missing_longbridge_event_context") or [])
+    if missing_event:
+        findings.append(f"最近 US/ALL 报告中有 {missing_event} 条没有 longbridge_event_context；资讯事件接入后的新报告应包含该字段。")
     missing_research = len(reports.get("growth_records_missing_research_engine") or [])
     if missing_research:
         findings.append(f"最近 Growth 报告中有 {missing_research} 条没有 research_engine 字段；投研层上线后的新报告应包含该字段。")
@@ -361,6 +369,13 @@ def _has_longbridge_fundamental_context(context: dict[str, Any]) -> bool:
     if not isinstance(fundamental_context, dict) or not fundamental_context:
         return False
     return bool(fundamental_context.get("symbol_data") or fundamental_context.get("status") in {"empty", "not_applicable"})
+
+
+def _has_longbridge_event_context(context: dict[str, Any]) -> bool:
+    event_context = context.get("longbridge_event_context")
+    if not isinstance(event_context, dict) or not event_context:
+        return False
+    return bool(event_context.get("symbol_data") or event_context.get("status") in {"empty", "not_applicable"})
 
 
 def _format_counter(counter: dict[str, Any]) -> str:
