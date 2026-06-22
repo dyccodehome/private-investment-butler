@@ -281,6 +281,7 @@ def build_daily_review_context(
     intel = _collect_symbol_intel(limited_tracked)
     longbridge_event_context = _build_longbridge_event_context(clean_market, limited_tracked, target_date)
     intel = _merge_longbridge_event_context(intel, longbridge_event_context)
+    longbridge_options_context = _build_longbridge_options_context(clean_market, limited_tracked, target_date)
     dossiers = _collect_research_dossier_summaries(clean_framework, limited_tracked)
     data_gaps = _daily_data_gaps(
         snapshot,
@@ -291,6 +292,7 @@ def build_daily_review_context(
         longbridge_market_context,
         longbridge_fundamental_context,
         longbridge_event_context,
+        longbridge_options_context,
     )
     research_engine = _build_research_engine_context(
         framework_id=clean_framework,
@@ -299,6 +301,7 @@ def build_daily_review_context(
         research_dossiers=dossiers,
         market_data=market_data,
         fundamental_data=longbridge_fundamental_context,
+        options_data=longbridge_options_context,
         as_of=target_date,
     )
     operation_framework = _build_operation_framework_context(
@@ -330,6 +333,7 @@ def build_daily_review_context(
         "longbridge_market_context": longbridge_market_context,
         "longbridge_fundamental_context": longbridge_fundamental_context,
         "longbridge_event_context": longbridge_event_context,
+        "longbridge_options_context": longbridge_options_context,
         "symbol_intel": intel,
         "research_dossiers": dossiers,
         "research_engine": research_engine,
@@ -369,6 +373,7 @@ def build_weekly_review_context(*, framework_id: str, as_of: date | None = None)
     intel = _collect_symbol_intel(limited_tracked)
     longbridge_event_context = _build_longbridge_event_context("US", limited_tracked, target_date)
     intel = _merge_longbridge_event_context(intel, longbridge_event_context)
+    longbridge_options_context = _build_longbridge_options_context("US", limited_tracked, target_date)
     dossiers = _collect_research_dossier_summaries(clean_framework, limited_tracked)
     data_gaps = _weekly_data_gaps(
         daily_records,
@@ -379,6 +384,7 @@ def build_weekly_review_context(*, framework_id: str, as_of: date | None = None)
         longbridge_market_context=longbridge_market_context,
         longbridge_fundamental_context=longbridge_fundamental_context,
         longbridge_event_context=longbridge_event_context,
+        longbridge_options_context=longbridge_options_context,
     )
     research_engine = _build_research_engine_context(
         framework_id=clean_framework,
@@ -387,6 +393,7 @@ def build_weekly_review_context(*, framework_id: str, as_of: date | None = None)
         research_dossiers=dossiers,
         market_data=market_data,
         fundamental_data=longbridge_fundamental_context,
+        options_data=longbridge_options_context,
         as_of=target_date,
     )
     operation_framework = _build_operation_framework_context(
@@ -420,6 +427,7 @@ def build_weekly_review_context(*, framework_id: str, as_of: date | None = None)
         "longbridge_market_context": longbridge_market_context,
         "longbridge_fundamental_context": longbridge_fundamental_context,
         "longbridge_event_context": longbridge_event_context,
+        "longbridge_options_context": longbridge_options_context,
         "symbol_intel": intel,
         "research_dossiers": dossiers,
         "research_engine": research_engine,
@@ -783,6 +791,39 @@ def _build_longbridge_event_context(market: str, symbols: list[TrackedSymbol], a
         }
 
 
+def _build_longbridge_options_context(market: str, symbols: list[TrackedSymbol], as_of: date) -> dict[str, Any]:
+    if market not in {"US", "ALL"}:
+        return {
+            "status": "not_applicable",
+            "reason": "长桥期权上下文当前只接入 US/ALL 定时复盘。",
+            "symbol_data": {},
+        }
+    us_symbols = [item.symbol for item in symbols if item.market == "US"]
+    if not us_symbols:
+        return {
+            "status": "empty",
+            "reason": "没有 US 标的需要读取长桥期权上下文。",
+            "symbol_data": {},
+        }
+    try:
+        from src.longbridge_options_provider import build_options_context_snapshot
+
+        return build_options_context_snapshot(symbols=us_symbols, market="US")
+    except Exception as exc:
+        return {
+            "source": "longbridge_cli",
+            "scope": "options_context_snapshot",
+            "status": "error",
+            "error": str(exc),
+            "symbol_data": {},
+            "data_quality": {
+                "status": "error",
+                "limitations": [str(exc)],
+            },
+            "write_policy": "read_only_options_data",
+        }
+
+
 def _merge_longbridge_market_context(
     market_data: dict[str, Any],
     longbridge_market_context: dict[str, Any],
@@ -927,6 +968,7 @@ def _build_research_engine_context(
     research_dossiers: dict[str, Any],
     market_data: dict[str, Any],
     fundamental_data: dict[str, Any],
+    options_data: dict[str, Any],
     as_of: date,
 ) -> dict[str, Any]:
     if framework_id != "Growth_Engine":
@@ -954,6 +996,7 @@ def _build_research_engine_context(
             research_dossiers=research_dossiers,
             market_data=market_data,
             fundamental_data=fundamental_data,
+            options_data=options_data,
             as_of=as_of,
             max_symbols=MAX_CONTEXT_SYMBOLS,
             fetch_missing_context=False,
@@ -1334,6 +1377,7 @@ def _daily_data_gaps(
     longbridge_market_context: dict[str, Any] | None = None,
     longbridge_fundamental_context: dict[str, Any] | None = None,
     longbridge_event_context: dict[str, Any] | None = None,
+    longbridge_options_context: dict[str, Any] | None = None,
 ) -> list[str]:
     gaps: list[str] = []
     if not tracked:
@@ -1353,6 +1397,7 @@ def _daily_data_gaps(
     gaps.extend(_longbridge_market_context_gaps(longbridge_market_context))
     gaps.extend(_longbridge_fundamental_context_gaps(longbridge_fundamental_context))
     gaps.extend(_longbridge_event_context_gaps(longbridge_event_context))
+    gaps.extend(_longbridge_options_context_gaps(longbridge_options_context))
     for symbol, payload in market_data.items():
         if payload.get("status") != "ok":
             gaps.append(f"{symbol} 行情不可用：{payload.get('error') or payload.get('status')}")
@@ -1376,6 +1421,7 @@ def _weekly_data_gaps(
     longbridge_market_context: dict[str, Any] | None = None,
     longbridge_fundamental_context: dict[str, Any] | None = None,
     longbridge_event_context: dict[str, Any] | None = None,
+    longbridge_options_context: dict[str, Any] | None = None,
 ) -> list[str]:
     gaps: list[str] = []
     if not daily_records:
@@ -1390,6 +1436,7 @@ def _weekly_data_gaps(
     gaps.extend(_longbridge_market_context_gaps(longbridge_market_context))
     gaps.extend(_longbridge_fundamental_context_gaps(longbridge_fundamental_context))
     gaps.extend(_longbridge_event_context_gaps(longbridge_event_context))
+    gaps.extend(_longbridge_options_context_gaps(longbridge_options_context))
     for symbol, payload in intel.items():
         if not _intel_payload_has_items(payload):
             gaps.append(f"{symbol} 周复盘新闻/公告为空。")
@@ -1433,6 +1480,19 @@ def _longbridge_event_context_gaps(context: dict[str, Any] | None) -> list[str]:
         return [f"长桥资讯事件只读快照读取失败：{context.get('error') or 'unknown'}"]
     quality = context.get("data_quality") if isinstance(context.get("data_quality"), dict) else {}
     return [f"长桥资讯事件只读快照部分缺失：{item}" for item in quality.get("limitations") or []]
+
+
+def _longbridge_options_context_gaps(context: dict[str, Any] | None) -> list[str]:
+    if not isinstance(context, dict) or context.get("status") in {"not_applicable", "empty"}:
+        return []
+    if context.get("status") == "error":
+        return [f"长桥期权只读快照读取失败：{context.get('error') or 'unknown'}"]
+    quality = context.get("data_quality") if isinstance(context.get("data_quality"), dict) else {}
+    gaps = [f"长桥期权只读快照部分缺失：{item}" for item in quality.get("limitations") or []]
+    summary = context.get("summary") if isinstance(context.get("summary"), dict) else {}
+    if context.get("symbols") and summary.get("symbols_with_volume", 0) == 0:
+        gaps.append("长桥期权只读快照没有返回可用成交量数据；可能缺少 OPRA 或期权行情权限。")
+    return gaps
 
 
 def _research_dossier_notes(dossiers: dict[str, Any]) -> list[str]:

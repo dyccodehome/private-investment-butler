@@ -142,6 +142,13 @@ COMMAND_REGISTRY: list[CommandDef] = [
         aliases=("longbridge-event", "lb-events", "lb-event"),
         args_hint="symbol=<code>[,<code>] [market=US] [limit=6] [item_limit=5] [timeout=<seconds>]",
     ),
+    CommandDef(
+        "longbridge-options",
+        "读取长桥期权链、到期日、成交量和 put/call 风险只读快照",
+        "Ledger",
+        aliases=("longbridge-option", "lb-options", "lb-option"),
+        args_hint="symbol=<code>[,<code>] [market=US] [limit=6] [chain_limit=3] [daily_count=30] [quotes=false]",
+    ),
     CommandDef("apply", "确认并写入外部同步结果；当前支持 longbridge cash_anchor", "Ledger", args_hint="longbridge cash_anchor"),
     CommandDef(
         "absorb",
@@ -231,6 +238,7 @@ def handle_command(raw_text: str, chat_id: str) -> str | None:
         "longbridge-market": _handle_longbridge_market,
         "longbridge-fundamental": _handle_longbridge_fundamental,
         "longbridge-events": _handle_longbridge_events,
+        "longbridge-options": _handle_longbridge_options,
         "apply": _handle_apply,
         "absorb": _handle_absorb,
         "dossier-refresh": _handle_dossier_refresh,
@@ -277,6 +285,7 @@ def help_text() -> str:
         "/longbridge-market symbol=NVDA.US,MSFT.US [market=US] [kline_limit=6] - 读取长桥行情和市场状态只读快照",
         "/longbridge-fundamental symbol=NVDA.US,MSFT.US [limit=6] - 读取长桥基本面只读快照",
         "/longbridge-events symbol=NVDA.US,MSFT.US [limit=6] [item_limit=5] - 读取长桥资讯事件只读快照",
+        "/longbridge-options symbol=NVDA.US,MSFT.US [limit=6] [chain_limit=3] [daily_count=30] - 读取长桥期权只读快照",
         "/apply longbridge cash_anchor - 确认后把长桥 QQQI/XQQI/TQQQ 写入 Cash Anchor 账本",
         "",
         "Growth Engine：",
@@ -921,6 +930,35 @@ def _handle_longbridge_events(args: str, chat_id: str) -> str:
     except (RuntimeError, ValueError) as exc:
         return str(exc)
     return format_event_context_snapshot(snapshot)
+
+
+def _handle_longbridge_options(args: str, chat_id: str) -> str:
+    from src.longbridge_options_provider import build_options_context_snapshot, format_options_context_snapshot
+
+    parsed = _parse_key_values(args)
+    symbols = _parse_symbol_list(parsed.get("symbol") or parsed.get("symbols") or args)
+    if not symbols:
+        return "请提供 symbol，例如：/longbridge-options symbol=NVDA.US,MSFT.US market=US"
+    timeout = _optional_int(parsed.get("timeout")) or 15
+    limit = _optional_int(parsed.get("limit") or parsed.get("symbol_limit")) or 6
+    chain_limit = _optional_int(parsed.get("chain_limit") or parsed.get("chain_symbols")) or 3
+    daily_count = _optional_int(parsed.get("daily_count") or parsed.get("count")) or 30
+    include_chain = str(parsed.get("chain") or "true").lower() not in {"0", "false", "no", "n"}
+    include_quotes = str(parsed.get("quotes") or "false").lower() in {"1", "true", "yes", "y"}
+    try:
+        snapshot = build_options_context_snapshot(
+            symbols=symbols,
+            market=parsed.get("market") or "US",
+            symbol_limit=limit,
+            chain_symbol_limit=chain_limit,
+            daily_count=daily_count,
+            include_chain=include_chain,
+            include_quotes=include_quotes,
+            timeout_seconds=timeout,
+        )
+    except (RuntimeError, ValueError) as exc:
+        return str(exc)
+    return format_options_context_snapshot(snapshot)
 
 
 def _handle_research_radar(args: str, chat_id: str) -> str:

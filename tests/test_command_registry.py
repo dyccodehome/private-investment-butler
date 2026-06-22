@@ -36,6 +36,7 @@ class CommandRegistryTest(unittest.TestCase):
         self.assertIn("/longbridge-market", text)
         self.assertIn("/longbridge-fundamental", text)
         self.assertIn("/longbridge-events", text)
+        self.assertIn("/longbridge-options", text)
         self.assertIn("/growth-universe", text)
         self.assertIn("/research-radar", text)
         self.assertIn("/operation-plan", text)
@@ -382,6 +383,29 @@ class CommandRegistryTest(unittest.TestCase):
         self.assertEqual(kwargs["market"], "us")
         self.assertEqual(kwargs["symbol_limit"], 2)
         self.assertEqual(kwargs["item_limit"], 4)
+        self.assertEqual(kwargs["timeout_seconds"], 3)
+        format_snapshot.assert_called_once_with({"status": "ok"})
+
+    @patch("src.longbridge_options_provider.format_options_context_snapshot")
+    @patch("src.longbridge_options_provider.build_options_context_snapshot")
+    def test_longbridge_options_command_uses_provider(self, build_snapshot, format_snapshot) -> None:
+        build_snapshot.return_value = {"status": "ok"}
+        format_snapshot.return_value = "期权快照"
+
+        reply = handle_command(
+            "/longbridge-options symbol=nvda.us,msft.us market=us limit=2 chain_limit=1 daily_count=20 quotes=true timeout=3",
+            "cli",
+        )
+
+        self.assertEqual(reply, "期权快照")
+        build_snapshot.assert_called_once()
+        kwargs = build_snapshot.call_args.kwargs
+        self.assertEqual(kwargs["symbols"], ["NVDA.US", "MSFT.US"])
+        self.assertEqual(kwargs["market"], "us")
+        self.assertEqual(kwargs["symbol_limit"], 2)
+        self.assertEqual(kwargs["chain_symbol_limit"], 1)
+        self.assertEqual(kwargs["daily_count"], 20)
+        self.assertTrue(kwargs["include_quotes"])
         self.assertEqual(kwargs["timeout_seconds"], 3)
         format_snapshot.assert_called_once_with({"status": "ok"})
 

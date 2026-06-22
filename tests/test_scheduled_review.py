@@ -69,11 +69,14 @@ class ScheduledReviewTest(unittest.TestCase):
                 "src.longbridge_fundamental_provider.build_fundamental_context_snapshot"
             ) as fundamental_context, patch(
                 "src.longbridge_event_provider.build_event_context_snapshot"
-            ) as event_context:
+            ) as event_context, patch(
+                "src.longbridge_options_provider.build_options_context_snapshot"
+            ) as options_context:
                 account_snapshot.return_value = _account_activity()
                 market_context.return_value = _market_context()
                 fundamental_context.return_value = _fundamental_context()
                 event_context.return_value = _event_context()
+                options_context.return_value = _options_context()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-04",
                     "market_filter": "US",
@@ -155,11 +158,13 @@ class ScheduledReviewTest(unittest.TestCase):
         self.assertEqual(context["longbridge_market_context"]["summary"]["quote_count"], 1)
         self.assertEqual(context["longbridge_fundamental_context"]["summary"]["valuation_count"], 1)
         self.assertEqual(context["longbridge_event_context"]["summary"]["news_count"], 1)
+        self.assertEqual(context["longbridge_options_context"]["summary"]["symbols_with_volume"], 1)
         self.assertEqual(context["symbol_intel"]["NVDA.US"]["longbridge_news"]["items"][0]["title"], "Longbridge NVIDIA AI news")
         self.assertEqual(context["market_data"]["NVDA.US"]["data"]["MA120"], 100)
         self.assertEqual(context["research_engine"]["engine"], "growth_research_mvp")
         self.assertEqual(context["research_engine"]["market_context_summary"]["symbols_with_ma120"], 1)
         self.assertEqual(context["research_engine"]["fundamental_context_summary"]["symbols_with_valuation"], 1)
+        self.assertEqual(context["research_engine"]["options_context_summary"]["symbols_with_high_put_call"], 1)
         self.assertEqual(context["research_engine"]["research_signals"][0]["ticker"], "NVDA.US")
         self.assertEqual(context["operation_framework"]["engine"], "operation_framework")
         self.assertEqual(context["operation_framework"]["operation_plans"][0]["ticker"], "NVDA.US")
@@ -182,11 +187,14 @@ class ScheduledReviewTest(unittest.TestCase):
                 "src.longbridge_fundamental_provider.build_fundamental_context_snapshot"
             ) as fundamental_context, patch(
                 "src.longbridge_event_provider.build_event_context_snapshot"
-            ) as event_context:
+            ) as event_context, patch(
+                "src.longbridge_options_provider.build_options_context_snapshot"
+            ) as options_context:
                 account_snapshot.return_value = _account_activity()
                 market_context.return_value = _market_context()
                 fundamental_context.return_value = _fundamental_context()
                 event_context.return_value = _event_context()
+                options_context.return_value = _options_context()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-07",
                     "market_filter": "US",
@@ -242,6 +250,7 @@ class ScheduledReviewTest(unittest.TestCase):
         self.assertEqual(context["longbridge_market_context"]["summary"]["quote_count"], 1)
         self.assertEqual(context["longbridge_fundamental_context"]["summary"]["valuation_count"], 1)
         self.assertEqual(context["longbridge_event_context"]["summary"]["news_count"], 1)
+        self.assertEqual(context["longbridge_options_context"]["summary"]["symbols_with_volume"], 1)
         self.assertEqual(context["research_engine"]["engine"], "growth_research_mvp")
         self.assertEqual(context["operation_framework"]["engine"], "operation_framework")
 
@@ -263,11 +272,14 @@ class ScheduledReviewTest(unittest.TestCase):
                 "src.longbridge_fundamental_provider.build_fundamental_context_snapshot"
             ) as fundamental_context, patch(
                 "src.longbridge_event_provider.build_event_context_snapshot"
-            ) as event_context:
+            ) as event_context, patch(
+                "src.longbridge_options_provider.build_options_context_snapshot"
+            ) as options_context:
                 account_snapshot.return_value = _account_activity()
                 market_context.return_value = _market_context()
                 fundamental_context.return_value = _fundamental_context()
                 event_context.return_value = _event_context()
+                options_context.return_value = _options_context()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-04",
                     "market_filter": "US",
@@ -354,11 +366,14 @@ class ScheduledReviewTest(unittest.TestCase):
                 "src.longbridge_fundamental_provider.build_fundamental_context_snapshot"
             ) as fundamental_context, patch(
                 "src.longbridge_event_provider.build_event_context_snapshot"
-            ) as event_context:
+            ) as event_context, patch(
+                "src.longbridge_options_provider.build_options_context_snapshot"
+            ) as options_context:
                 account_snapshot.return_value = _account_activity()
                 market_context.return_value = _market_context()
                 fundamental_context.return_value = _fundamental_context()
                 event_context.return_value = _event_context()
+                options_context.return_value = _options_context()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-04",
                     "market_filter": "US",
@@ -426,10 +441,13 @@ class ScheduledReviewTest(unittest.TestCase):
                 "src.longbridge_fundamental_provider.build_fundamental_context_snapshot"
             ) as fundamental_context, patch(
                 "src.longbridge_event_provider.build_event_context_snapshot"
-            ) as event_context:
+            ) as event_context, patch(
+                "src.longbridge_options_provider.build_options_context_snapshot"
+            ) as options_context:
                 market_context.return_value = _market_context()
                 fundamental_context.return_value = _fundamental_context()
                 event_context.return_value = _event_context()
+                options_context.return_value = _options_context()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-04",
                     "market_filter": "US",
@@ -501,12 +519,15 @@ class ScheduledReviewTest(unittest.TestCase):
             ) as fundamental_context, patch(
                 "src.longbridge_event_provider.build_event_context_snapshot"
             ) as event_context, patch(
+                "src.longbridge_options_provider.build_options_context_snapshot"
+            ) as options_context, patch(
                 "src.scheduled_review.LLMClient"
             ) as client_cls:
                 account_snapshot.return_value = _account_activity()
                 market_context.return_value = _market_context()
                 fundamental_context.return_value = _fundamental_context()
                 event_context.return_value = _event_context()
+                options_context.return_value = _options_context()
                 build_snapshot.return_value = {
                     "as_of": "2026-06-04",
                     "market_filter": "US",
@@ -714,6 +735,39 @@ def _event_context(status: str = "ok") -> dict:
         },
         "data_quality": {"status": status, "limitations": []},
         "write_policy": "read_only_event_data; no posting, subscription changes, order placement, amendment, or cancellation",
+    }
+
+
+def _options_context(status: str = "ok") -> dict:
+    return {
+        "source": "longbridge_cli",
+        "scope": "options_context_snapshot",
+        "as_of": "2026-06-04T08:00:00",
+        "market": "US",
+        "symbols": ["NVDA.US"],
+        "chain_symbols": ["NVDA.US"],
+        "summary": {
+            "symbol_count": 1,
+            "symbols_with_expirations": 1,
+            "symbols_with_chain": 1,
+            "symbols_with_volume": 1,
+            "symbols_with_quotes": 0,
+            "high_put_call_count": 1,
+        },
+        "symbol_data": {
+            "NVDA.US": {
+                "expirations": ["2026-04-17"],
+                "nearest_expiration": "2026-04-17",
+                "chain_preview": [{"strike": "190", "call_symbol": "NVDA260417C190000.US"}],
+                "strike_count": 1,
+                "volume_snapshot": {"call_vol": "100", "put_vol": "140", "pc_ratio": "1.4"},
+                "volume_daily_preview": [{"date": "2026-04-16", "pc_vol": 1.4, "pc_oi": 0.7}],
+                "quote_preview": [],
+                "risk_summary": {"latest_pc_vol": 1.4, "put_call_signal": "put_pressure_high"},
+            }
+        },
+        "data_quality": {"status": status, "limitations": []},
+        "write_policy": "read_only_options_data; no option order placement, exercise, amendment, or cancellation",
     }
 
 

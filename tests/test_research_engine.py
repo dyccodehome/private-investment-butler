@@ -95,6 +95,17 @@ class ResearchEngineTest(unittest.TestCase):
                     }
                 }
             },
+            options_data={
+                "symbol_data": {
+                    "NVDA.US": {
+                        "expirations": ["2026-04-17"],
+                        "chain_preview": [{"strike": "190", "call_symbol": "NVDA260417C190000.US"}],
+                        "volume_snapshot": {"call_vol": "100", "put_vol": "140", "pc_ratio": "1.4"},
+                        "volume_daily_preview": [{"date": "2026-04-16", "pc_vol": 1.4}],
+                        "risk_summary": {"latest_pc_vol": 1.4, "put_call_signal": "put_pressure_high"},
+                    }
+                }
+            },
             as_of=date(2026, 6, 16),
             fetch_missing_context=False,
         )
@@ -108,8 +119,10 @@ class ResearchEngineTest(unittest.TestCase):
         self.assertEqual(report["market_context_summary"]["symbols_with_ma120"], 1)
         self.assertEqual(report["market_context_summary"]["symbols_with_longbridge_market_snapshot"], 1)
         self.assertEqual(report["fundamental_context_summary"]["symbols_with_valuation"], 1)
+        self.assertEqual(report["options_context_summary"]["symbols_with_high_put_call"], 1)
         self.assertTrue(any("长桥估值摘要" in item for item in signals["NVDA.US"]["evidence"]))
         self.assertTrue(any("长桥资讯/披露/话题命中" in item for item in signals["NVDA.US"]["evidence"]))
+        self.assertTrue(any("长桥期权风险摘要" in item for item in signals["NVDA.US"]["evidence"]))
         self.assertTrue(report["theme_radar"])
         queue = {item["ticker"]: item for item in report["deep_research_queue"]}
         self.assertEqual(queue["NET.US"]["suggested_action"], "create_dossier")

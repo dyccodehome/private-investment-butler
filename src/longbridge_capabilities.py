@@ -232,11 +232,35 @@ READ_CAPABILITIES: dict[str, LongbridgeCapability] = {
         access="read",
         description="读取新闻、公告、公司事件、财报日历和分红日历。",
     ),
+    "option_chain": LongbridgeCapability(
+        capability_id="option_chain",
+        domain="options",
+        access="read",
+        description="读取期权链和到期日。",
+        command_prefix=("longbridge", "option", "chain"),
+        implemented=True,
+    ),
+    "option_quote": LongbridgeCapability(
+        capability_id="option_quote",
+        domain="options",
+        access="read",
+        description="读取期权合约 quote、隐含波动和希腊值。",
+        command_prefix=("longbridge", "option", "quote"),
+        implemented=True,
+    ),
+    "option_volume": LongbridgeCapability(
+        capability_id="option_volume",
+        domain="options",
+        access="read",
+        description="读取期权成交量、持仓量和 put/call 比例。",
+        command_prefix=("longbridge", "option", "volume"),
+        implemented=True,
+    ),
     "options_chain": LongbridgeCapability(
         capability_id="options_chain",
         domain="options",
         access="read",
-        description="读取期权链、到期日、希腊值和隐含波动。",
+        description="读取期权链、到期日、希腊值和隐含波动的旧聚合能力。",
     ),
 }
 
@@ -304,6 +328,8 @@ DENIED_COMMAND_TERMS = {
     "conditional-order",
     "recurring-order",
     "option-order",
+    "exercise",
+    "exercise-option",
 }
 
 

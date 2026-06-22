@@ -63,6 +63,15 @@ class LongbridgeCapabilitiesTest(unittest.TestCase):
         capability = assert_longbridge_command_allowed(["longbridge", "topic", "search", "AI", "--format", "json"])
         self.assertEqual(capability.capability_id, "topic")
 
+        capability = assert_longbridge_command_allowed(["longbridge", "option", "chain", "AAPL.US", "--format", "json"])
+        self.assertEqual(capability.capability_id, "option_chain")
+
+        capability = assert_longbridge_command_allowed(["longbridge", "option", "quote", "AAPL260417C190000.US", "--format", "json"])
+        self.assertEqual(capability.capability_id, "option_quote")
+
+        capability = assert_longbridge_command_allowed(["longbridge", "option", "volume", "AAPL.US", "--format", "json"])
+        self.assertEqual(capability.capability_id, "option_volume")
+
     def test_denies_trading_write_commands(self) -> None:
         with self.assertRaises(PermissionError):
             assert_longbridge_command_allowed(["longbridge", "submit-order", "NVDA.US"])
@@ -76,6 +85,9 @@ class LongbridgeCapabilitiesTest(unittest.TestCase):
         with self.assertRaises(PermissionError):
             assert_longbridge_command_allowed(["longbridge", "topic", "create", "--body", "test"])
 
+        with self.assertRaises(PermissionError):
+            assert_longbridge_command_allowed(["longbridge", "option", "exercise", "AAPL260417C190000.US"])
+
     def test_denies_unknown_commands_until_provider_is_fixed(self) -> None:
         with self.assertRaises(PermissionError):
             assert_longbridge_command_allowed(["longbridge", "unknown-read", "--format", "json"])
@@ -85,6 +97,7 @@ class LongbridgeCapabilitiesTest(unittest.TestCase):
         self.assertEqual(assert_read_capability("candles").capability_id, "candles")
         self.assertEqual(assert_read_capability("valuation").capability_id, "valuation")
         self.assertEqual(assert_read_capability("news").capability_id, "news")
+        self.assertEqual(assert_read_capability("option_chain").capability_id, "option_chain")
         with self.assertRaises(PermissionError):
             assert_read_capability("fundamentals")
         self.assertEqual(assert_read_capability("fundamentals", require_implemented=False).capability_id, "fundamentals")
