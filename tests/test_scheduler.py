@@ -118,6 +118,21 @@ scheduler:
 
         self.assertTrue(is_job_due(job, config, now))
 
+    def test_startup_due_run_keys_only_suppresses_jobs_due_at_start(self) -> None:
+        config = load_scheduler_config()
+        startup = datetime(2026, 6, 22, 22, 45, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+        skip_keys = runner.startup_due_run_keys(config, startup, existing_run_keys=set())
+
+        self.assertIn("2026-06-22:growth_us_premarket_review", skip_keys)
+        self.assertIn("2026-06-22:cash_anchor_cn_close_review", skip_keys)
+        self.assertNotIn("2026-06-22:growth_us_close_review", skip_keys)
+
+        later = datetime(2026, 6, 23, 5, 25, tzinfo=ZoneInfo("Asia/Shanghai"))
+        due_later = runner.due_jobs(config, later, last_run_dates=skip_keys)
+
+        self.assertIn("growth_us_close_review", {job.name for job in due_later})
+
     def test_dry_run_once_does_not_call_llm_or_feishu(self) -> None:
         config = load_scheduler_config()
         job = _job(config, "cash_anchor_cn_close_review")

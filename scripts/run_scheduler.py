@@ -29,6 +29,11 @@ def main() -> None:
     parser.add_argument("--run-once", default="", help="Run one configured job by name. Defaults to dry-run.")
     parser.add_argument("--run-loop", action="store_true", help="Start scheduler loop. Requires scheduler.enabled=true.")
     parser.add_argument("--execute", action="store_true", help="Execute real job logic instead of dry-run.")
+    parser.add_argument(
+        "--no-catch-up",
+        action="store_true",
+        help="When starting --run-loop, skip jobs that are already due at startup.",
+    )
     parser.add_argument("--poll-seconds", type=int, default=60, help="Loop poll interval.")
     args = parser.parse_args()
 
@@ -48,7 +53,7 @@ def main() -> None:
         print(run_job_once(job, dry_run=not args.execute))
         return
     if args.run_loop:
-        run_loop(dry_run=False if args.execute else None, poll_seconds=args.poll_seconds)
+        run_loop(dry_run=False if args.execute else None, poll_seconds=args.poll_seconds, skip_existing_due=args.no_catch_up)
         return
     _print_jobs(config)
 

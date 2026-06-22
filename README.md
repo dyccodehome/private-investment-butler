@@ -230,8 +230,10 @@ python3 scripts/run_scheduler.py --run-once growth_us_close_review --execute
 Run the scheduler loop:
 
 ```bash
-python3 scripts/run_scheduler.py --run-loop
+python3 scripts/run_scheduler.py --run-loop --execute --no-catch-up
 ```
+
+`--no-catch-up` is recommended for local restarts. It skips jobs that were already due when the loop starts, while keeping later jobs on the same market day active.
 
 ## Commands
 

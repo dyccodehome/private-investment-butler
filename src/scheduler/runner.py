@@ -65,24 +65,51 @@ def run_job_once(
     return result
 
 
-def run_loop(*, dry_run: bool | None = None, poll_seconds: int = 60) -> None:
+def run_loop(*, dry_run: bool | None = None, poll_seconds: int = 60, skip_existing_due: bool = False) -> None:
     config = load_scheduler_config()
     effective_dry_run = config.dry_run_by_default if dry_run is None else dry_run
     print(
         "Scheduler started: "
-        f"enabled={config.enabled} timezone={config.timezone} dry_run={effective_dry_run}",
+        f"enabled={config.enabled} timezone={config.timezone} dry_run={effective_dry_run} "
+        f"skip_existing_due={skip_existing_due}",
         flush=True,
     )
     if not config.enabled:
         print("Scheduler is disabled in config.yaml. Use --list or enable scheduler.enabled before running loop.", flush=True)
         return
 
+    startup_skip_keys: set[str] = set()
+    if skip_existing_due:
+        now = datetime.now(tz=config.tzinfo)
+        startup_skip_keys = startup_due_run_keys(config, now, existing_run_keys=read_run_keys())
+        if startup_skip_keys:
+            print(
+                "Scheduler startup skipped already-due jobs: "
+                + ", ".join(sorted(startup_skip_keys)),
+                flush=True,
+            )
+
     while True:
         now = datetime.now(tz=config.tzinfo)
-        last_runs = read_run_keys()
+        last_runs = read_run_keys() | startup_skip_keys
         for job in due_jobs(config, now, last_run_dates=last_runs):
             _execute_and_record(job, config, now, dry_run=effective_dry_run)
         time.sleep(poll_seconds)
+
+
+def startup_due_run_keys(
+    config: SchedulerConfig,
+    now: datetime,
+    *,
+    existing_run_keys: set[str] | None = None,
+) -> set[str]:
+    """Return due run keys to suppress when starting a long-running scheduler late."""
+
+    existing = existing_run_keys or set()
+    return {
+        run_key(job, scheduled_run_date(job, config, now))
+        for job in due_jobs(config, now, last_run_dates=existing)
+    }
 
 
 def read_run_keys(path: Path = RUNS_PATH) -> set[str]:
