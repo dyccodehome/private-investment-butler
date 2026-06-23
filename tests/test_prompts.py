@@ -80,7 +80,11 @@ class PromptsTest(unittest.TestCase):
         self.assertIn("position_reviews", system)
         self.assertIn("data_gaps", system)
         self.assertIn("输出前自检", system)
+        self.assertIn("action_queue 必须从 position_reviews", system)
+        self.assertIn("触发条件必须贴合该公司或资产的真实业务", system)
+        self.assertIn("不得混用行业指标", system)
         self.assertIn("先给“结构化判断摘要”，再给“正式报告”", user)
+        self.assertIn("等待用户确认”必须覆盖所有 position_reviews", user)
         self.assertNotIn("{{", user)
 
 
