@@ -150,6 +150,7 @@ scheduler:
             "cash_anchor_cn_close_review",
             chat_id="oc_test",
             dry_run=True,
+            as_of=None,
         )
         send.assert_not_called()
 
@@ -170,6 +171,7 @@ scheduler:
             "cash_anchor_cn_premarket_review",
             chat_id="oc_test",
             dry_run=True,
+            as_of=None,
         )
         send.assert_not_called()
 
@@ -206,6 +208,29 @@ scheduler:
             self.assertIn("已跳过重复触发", reply)
             run_scheduled_review_job.assert_not_called()
             send.assert_not_called()
+
+    def test_execute_and_record_uses_job_timezone_run_date_as_review_date(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = load_scheduler_config()
+            job = _job(config, "growth_us_close_review")
+            fake_config = Mock()
+            fake_config.messaging.return_value.default_chat_id = ""
+            runs_path = Path(tmp) / "runs.jsonl"
+            now = datetime(2026, 6, 23, 5, 25, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+            with patch("src.scheduler.runner.get_config", return_value=fake_config), patch(
+                "src.scheduler.runner.run_scheduled_review_job", return_value="正式结果"
+            ) as run_scheduled_review_job, patch.object(runner, "STATE_DIR", Path(tmp)), patch.object(
+                runner, "RUNS_PATH", runs_path
+            ):
+                runner._execute_and_record(job, config, now, dry_run=False)
+
+        run_scheduled_review_job.assert_called_once_with(
+            "growth_us_close_review",
+            chat_id=None,
+            dry_run=False,
+            as_of=datetime(2026, 6, 22, tzinfo=ZoneInfo("America/New_York")).date(),
+        )
 
     def test_failed_job_is_logged_and_sends_error_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

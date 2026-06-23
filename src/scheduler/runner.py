@@ -6,7 +6,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from src import communication_gate
@@ -39,6 +39,7 @@ def run_job_once(
     chat_id: str | None = None,
     dry_run: bool = True,
     send_result: bool = True,
+    as_of: date | None = None,
 ) -> str:
     target_chat_id = chat_id or get_config().messaging().default_chat_id
     job_lock = _acquire_job_lock(job)
@@ -46,7 +47,12 @@ def run_job_once(
         return f"定时任务正在运行，已跳过重复触发：{job.name}"
     try:
         if is_scheduled_review_job_type(job.job_type):
-            result = run_scheduled_review_job(job.job_type, chat_id=target_chat_id or None, dry_run=dry_run)
+            result = run_scheduled_review_job(
+                job.job_type,
+                chat_id=target_chat_id or None,
+                dry_run=dry_run,
+                as_of=as_of,
+            )
         elif job.job_type == "growth_daily_review":
             result = run_growth_daily_review_job(job.market, chat_id=target_chat_id or None, dry_run=dry_run)
         elif job.job_type == "growth_weekly_review":
@@ -133,8 +139,9 @@ def read_run_keys(path: Path = RUNS_PATH) -> set[str]:
 def _execute_and_record(job: SchedulerJob, config: SchedulerConfig, now: datetime, *, dry_run: bool) -> None:
     status = "ok"
     error = ""
+    target_date = scheduled_run_date(job, config, now)
     try:
-        result = run_job_once(job, dry_run=dry_run)
+        result = run_job_once(job, dry_run=dry_run, as_of=target_date)
         if _is_duplicate_run_skip(result):
             status = "skipped"
     except Exception as exc:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from src.dividend_disclosure import review_cn_dividend_disclosures
 from src.growth_portfolio import review_growth_daily
 from src.longbridge_provider import format_longbridge_us_income_result, sync_longbridge_us_income_distributions
@@ -28,16 +30,22 @@ def is_scheduled_review_job_type(job_type: str) -> bool:
     return job_type in SCHEDULED_REVIEW_JOB_SPECS
 
 
-def run_scheduled_review_job(job_type: str, *, chat_id: str | None, dry_run: bool) -> str:
+def run_scheduled_review_job(
+    job_type: str,
+    *,
+    chat_id: str | None,
+    dry_run: bool,
+    as_of: date | None = None,
+) -> str:
     framework_id, market, workflow_type = SCHEDULED_REVIEW_JOB_SPECS[job_type]
     if dry_run:
         return f"[试运行] {framework_id} {market} {workflow_type} 定时工作流已匹配，未调用模型和外部数据源。"
     if workflow_type == "premarket":
-        return run_scheduled_premarket_review(framework_id, market, chat_id=chat_id)
+        return run_scheduled_premarket_review(framework_id, market, chat_id=chat_id, as_of=as_of)
     if workflow_type == "close":
-        return run_scheduled_close_review(framework_id, market, chat_id=chat_id)
+        return run_scheduled_close_review(framework_id, market, chat_id=chat_id, as_of=as_of)
     if workflow_type == "weekly":
-        return run_scheduled_weekly_review(framework_id, chat_id=chat_id)
+        return run_scheduled_weekly_review(framework_id, chat_id=chat_id, as_of=as_of)
     raise ValueError(f"未知定时工作流类型：{workflow_type}")
 
 
