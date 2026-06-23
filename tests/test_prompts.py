@@ -59,6 +59,30 @@ class PromptsTest(unittest.TestCase):
         self.assertIn("规则变更是否过拟合", purist)
         self.assertIn("中性但严格", neutral)
 
+    def test_scheduled_review_prompt_is_prompt_first_contract(self) -> None:
+        system = prompts.scheduled_review_system_prompt()
+        user = prompts.scheduled_review_user_prompt(
+            framework_id="Growth_Engine",
+            market="US",
+            workflow_type="close",
+            review_date="2026-06-22",
+            context_json='{"tracked_symbols":[]}',
+        )
+
+        self.assertIn("Prompt path: prompts/scheduled_review/system.md", system)
+        self.assertIn("Prompt path: prompts/scheduled_review/user.md", user)
+        self.assertIn("prompt-first", system)
+        self.assertIn("结构化判断摘要", system)
+        self.assertIn("正式报告", system)
+        self.assertIn("report_meta", system)
+        self.assertIn("action_queue", system)
+        self.assertIn("continuity_check", system)
+        self.assertIn("position_reviews", system)
+        self.assertIn("data_gaps", system)
+        self.assertIn("输出前自检", system)
+        self.assertIn("先给“结构化判断摘要”，再给“正式报告”", user)
+        self.assertNotIn("{{", user)
+
 
 if __name__ == "__main__":
     unittest.main()
